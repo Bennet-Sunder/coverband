@@ -5,7 +5,9 @@ require "bigdecimal"
 original_verbosity = $VERBOSE
 $VERBOSE = nil
 
-$SKIP_SIMPLECOV = true
+if ENV["SKIP_SIMPLECOV"] || BigDecimal(RUBY_VERSION[0, 3]) >= BigDecimal("3.1")
+  $SKIP_SIMPLECOV = true
+end
 
 require "rubygems"
 
