@@ -50,7 +50,7 @@ module Coverband
         @store.type = old_coverage_type
       end
 
-      def report_coverage
+      def report_coverage(test_case_id = nil)
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
 
@@ -64,7 +64,7 @@ module Coverband
                 @deferred_eager_loading_data = nil
               end
             end
-            @store.save_report(files_with_line_usage)
+            @store.save_report(files_with_line_usage, test_case_id)
           end
         end
       rescue => e

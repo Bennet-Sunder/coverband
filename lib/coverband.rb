@@ -66,8 +66,8 @@ module Coverband
     @@configured
   end
 
-  def self.report_coverage
-    coverage_instance.report_coverage
+  def self.report_coverage(test_case_id = nil)
+    coverage_instance.report_coverage(test_case_id)
   end
 
   def self.configuration

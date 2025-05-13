@@ -59,7 +59,7 @@ module Coverband
         @redis.srem(files_key, relative_path_file)
       end
 
-      def save_report(report)
+      def save_report(report, test_case_id)
         report_time = Time.now.to_i
         updated_time = (type == Coverband::EAGER_TYPE) ? nil : report_time
         keys = []
@@ -79,10 +79,10 @@ module Coverband
             )
           end
           next unless files_data.any?
-
           arguments_key = [@redis_namespace, SecureRandom.uuid].compact.join(".")
+
           @redis.set(arguments_key, {ttl: @ttl, files_data: files_data}.to_json, ex: JSON_PAYLOAD_EXPIRATION)
-          @redis.evalsha(hash_incr_script, [arguments_key], [report_time])
+          @redis.evalsha(hash_incr_script, [arguments_key], [report_time, test_case_id])
         end
         @redis.sadd(files_key, keys) if keys.any?
       end
@@ -228,7 +228,7 @@ module Coverband
         end
       end
 
-      def script_input(key:, file:, file_hash:, data:, report_time:, updated_time:)
+      def script_input(key:, file:, file_hash:, data:, report_time:, updated_time:, test_case_id: nil)
         coverage_data = data.each_with_index.each_with_object({}) do |(coverage, index), hash|
           hash[index] = coverage if coverage
         end
