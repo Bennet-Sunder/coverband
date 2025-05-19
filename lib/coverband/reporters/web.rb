@@ -96,6 +96,8 @@ module Coverband
               [200, coverband_headers(content_type: "text/json"), [debug_data]]
             when %r{\/load_file_details}
               [200, coverband_headers(content_type: "text/json"), [load_file_details]]
+            when %r{\/load_test_case_details}
+              [200, coverband_headers(content_type: "text/json"), [load_test_case_details]]
             when %r{\/json}
               [200, coverband_headers(content_type: "text/json"), [json]]
             when %r{\/report_json}
@@ -178,6 +180,10 @@ module Coverband
           filename: filename,
           base_path: base_path,
           open_report: false).file_details
+      end
+
+      def load_test_case_details
+        Coverband.configuration.store.coverage(nil, {test_case_map: true}).to_json
       end
 
       def clear

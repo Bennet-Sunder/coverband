@@ -53,7 +53,6 @@ module Coverband
       def report_coverage(test_case_id = nil)
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
-
           files_with_line_usage = filtered_files(Delta.results)
           if @store.type == Coverband::EAGER_TYPE && Coverband.configuration.defer_eager_loading_data?
             @deferred_eager_loading_data = files_with_line_usage

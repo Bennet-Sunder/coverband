@@ -18,11 +18,27 @@ module Coverband
     end
 
     config.after_initialize do
+      require "coverband/integrations/sidekiq" if defined?(::Sidekiq) # Ensure Sidekiq integration is loaded
+
       unless Coverband.tasks_to_ignore?
         Coverband.configure unless Coverband.configured?
         Coverband.eager_loading_coverage!
         Coverband.report_coverage
         Coverband.runtime_coverage!
+      end
+
+      if defined?(::Sidekiq)
+        Sidekiq.configure_client do |config|
+          config.client_middleware do |chain|
+            chain.add Coverband::Integrations::SidekiqClientMiddleware
+          end
+        end
+
+        Sidekiq.configure_server do |config|
+          config.server_middleware do |chain|
+            chain.add Coverband::Integrations::SidekiqServerMiddleware
+          end
+        end
       end
 
       Coverband.configuration.railtie!

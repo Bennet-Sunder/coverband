@@ -13,7 +13,6 @@ module Coverband
         self.notice = options.fetch(:notice) { nil }
         self.base_path = options.fetch(:base_path) { "./" }
         self.filename = options.fetch(:filename) { nil }
-
         coverband_reports = Coverband::Reporters::Base.report(store, options)
         # NOTE: at the moment the optimization around paging and filenames only works for hash redis store
         self.filtered_report_files = if (page || filename) && store.is_a?(Coverband::Adapters::HashRedisStore)

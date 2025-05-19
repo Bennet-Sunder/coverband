@@ -113,8 +113,23 @@ module Coverband
           end
         end
 
-        files_set.each_with_object({}) do |data_from_redis, hash|
-          add_coverage_for_file(data_from_redis, hash)
+        if opts[:test_case_map]
+          test_case_map = {}
+          files_set.each do |hash|
+            add_test_case_map(test_case_map, hash)
+          end
+
+          # Sort the line numbers for each file within each test case
+          test_case_map.each_value do |files_and_lines|
+            files_and_lines.each_value do |line_numbers_array|
+              line_numbers_array.sort!
+            end
+          end
+          test_case_map # Ensure the populated and sorted map is returned
+        else
+          files_set.each_with_object({}) do |data_from_redis, hash|
+            add_coverage_for_file(data_from_redis, hash)
+          end
         end
       end
 
@@ -147,6 +162,7 @@ module Coverband
 
         # NOTE: This is kind of hacky, we find all the matching eager loading data
         # for current page of runtime data.
+
         eager_key_pre = key_prefix(Coverband::EAGER_TYPE)
         runtime_key_pre = key_prefix(Coverband::RUNTIME_TYPE)
         matched_file_set = runtime_file_set.map do |runtime_key|
@@ -196,6 +212,48 @@ module Coverband
       end
 
       private
+
+      # test_case_id: {file_name: [line_number, line_number]}
+      def add_test_case_map(test_case_map, hash_from_redis)
+        return if hash_from_redis.nil? || hash_from_redis.empty?
+
+        file_name = hash_from_redis[FILE_KEY]
+        # The 'test_cases' field is expected to contain a JSON string like:
+        # "{\"line_number_str\":[\"test_id1\",\"test_id2\"], ...}"
+        test_cases_json = hash_from_redis['test_cases']
+
+        return if file_name.nil? || test_cases_json.nil? || test_cases_json.empty?
+
+        begin
+          # line_to_test_ids_map will be like: {"35" => ["test_id_A"], "42" => ["test_id_B", "test_id_C"]}
+          line_to_test_ids_map = JSON.parse(test_cases_json)
+        rescue JSON::ParserError => e
+          Coverband.configuration.logger.warn "Coverband: Malformed JSON in 'test_cases' for file #{file_name}: #{test_cases_json}. Error: #{e.message}"
+          return
+        end
+
+        # Ensure line_to_test_ids_map is a hash, as expected from the JSON
+        return unless line_to_test_ids_map.is_a?(Hash)
+
+        line_to_test_ids_map.each do |line_number_str, test_ids_array|
+          # Ensure test_ids_array is actually an array from the parsed JSON
+          next unless test_ids_array.is_a?(Array)
+
+          line_number = line_number_str.to_i # Convert line number string to integer
+
+          test_ids_array.each do |test_id|
+            next if test_id.nil? || test_id.empty? # Skip nil or empty test_ids
+
+            test_case_map[test_id] ||= {}
+            test_case_map[test_id][file_name] ||= []
+
+            # Add line number if not already present for this test_id and file_name
+            unless test_case_map[test_id][file_name].include?(line_number)
+              test_case_map[test_id][file_name] << line_number
+            end
+          end
+        end
+      end
 
       def add_coverage_for_file(data_from_redis, hash)
         return if data_from_redis.empty?
