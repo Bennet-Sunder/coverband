@@ -14,7 +14,6 @@ module Coverband
       if original_test_case_id
         # Construct a unique identifier for the request part using method and path
         # Example: "GET|/users/1"
-        byebug
         request_identifier = "#{env['REQUEST_METHOD']}|#{env['PATH_INFO']}"
         
         # Combine with the original test case ID using a clear separator "::REQ::"
