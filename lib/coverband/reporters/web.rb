@@ -183,7 +183,10 @@ module Coverband
       end
 
       def load_test_case_details
-        Coverband.configuration.store.coverage(nil, {test_case_map: true}).to_json
+        # The data from the store is now already in the desired final format:
+        # { original_test_case_id => { request_id => { file_name => [line_numbers] } } }
+        processed_data = Coverband.configuration.store.coverage(nil, {test_case_map: true})
+        processed_data.to_json
       end
 
       def clear

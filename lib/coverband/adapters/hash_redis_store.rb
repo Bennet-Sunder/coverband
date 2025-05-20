@@ -91,21 +91,23 @@ module Coverband
       # When paging code should use coverage_for_types and pull eager and runtime together as matched pairs
       def coverage(local_type = nil, opts = {})
         page_size = opts[:page_size] || 250
-        files_set = if opts[:page]
-          raise "call coverage_for_types with paging"
+        # Determine the set of Redis keys to fetch based on options
+        keys_to_fetch = if opts[:page]
+          raise "call coverage_for_types with paging" # Paging should use a different path
         elsif opts[:filename]
           type_key_prefix = key_prefix(local_type)
-          # NOTE: a better way to extract filename from key would be better
           files_set(local_type).select do |cache_key|
+            # A more robust way to extract filename might be needed if keys change format
             cache_key.sub(type_key_prefix, "").match(short_name(opts[:filename]))
-          end || {}
+          end || [] # Ensure it's an array
         else
           files_set(local_type)
         end
 
-        # below uses batches with a sleep in between to avoid overloading redis
-        files_set = files_set.each_slice(page_size).flat_map do |key_batch|
-          sleep(0.01 * rand(1..10))
+        # Fetch data from Redis in batches
+        # files_data_from_redis will be an array of hashes, each hash from HGETALL
+        files_data_from_redis = keys_to_fetch.each_slice(page_size).flat_map do |key_batch|
+          sleep(0.01 * rand(1..10)) # Avoid overloading Redis
           @redis.pipelined do |pipeline|
             key_batch.each do |key|
               pipeline.hgetall(key)
@@ -114,20 +116,26 @@ module Coverband
         end
 
         if opts[:test_case_map]
-          test_case_map = {}
-          files_set.each do |hash|
-            add_test_case_map(test_case_map, hash)
+          # The add_test_case_map method now directly populates the accumulator
+          # with the final desired structure:
+          # { original_test_case_id => { request_id => { file_name => [line_numbers] } } }
+          processed_test_case_data = {}
+          files_data_from_redis.each do |hash_from_redis|
+            add_test_case_map(processed_test_case_data, hash_from_redis)
           end
 
-          # Sort the line numbers for each file within each test case
-          test_case_map.each_value do |files_and_lines|
-            files_and_lines.each_value do |line_numbers_array|
-              line_numbers_array.sort!
+          # Sort line numbers for each file within each request_id's data
+          processed_test_case_data.each_value do |requests_map|
+            requests_map.each_value do |files_and_lines_map|
+              files_and_lines_map.each_value do |line_numbers_array|
+                line_numbers_array.sort!
+              end
             end
           end
-          test_case_map # Ensure the populated and sorted map is returned
+          processed_test_case_data
         else
-          files_set.each_with_object({}) do |data_from_redis, hash|
+          # Original logic for non-test_case_map requests
+          files_data_from_redis.each_with_object({}) do |data_from_redis, hash|
             add_coverage_for_file(data_from_redis, hash)
           end
         end
@@ -213,43 +221,44 @@ module Coverband
 
       private
 
-      # test_case_id: {file_name: [line_number, line_number]}
-      def add_test_case_map(test_case_map, hash_from_redis)
+      # Populates test_case_data_accumulator with structure:
+      # { original_test_case_id => { request_id => { file_name => [line_numbers] } } }
+      def add_test_case_map(test_case_data_accumulator, hash_from_redis)
         return if hash_from_redis.nil? || hash_from_redis.empty?
 
         file_name = hash_from_redis[FILE_KEY]
-        # The 'test_cases' field is expected to contain a JSON string like:
-        # "{\"line_number_str\":[\"test_id1\",\"test_id2\"], ...}"
         test_cases_json = hash_from_redis['test_cases']
 
         return if file_name.nil? || test_cases_json.nil? || test_cases_json.empty?
 
         begin
-          # line_to_test_ids_map will be like: {"35" => ["test_id_A"], "42" => ["test_id_B", "test_id_C"]}
-          line_to_test_ids_map = JSON.parse(test_cases_json)
+          line_to_augmented_ids_map = JSON.parse(test_cases_json)
         rescue JSON::ParserError => e
           Coverband.configuration.logger.warn "Coverband: Malformed JSON in 'test_cases' for file #{file_name}: #{test_cases_json}. Error: #{e.message}"
           return
         end
 
-        # Ensure line_to_test_ids_map is a hash, as expected from the JSON
-        return unless line_to_test_ids_map.is_a?(Hash)
+        return unless line_to_augmented_ids_map.is_a?(Hash)
 
-        line_to_test_ids_map.each do |line_number_str, test_ids_array|
-          # Ensure test_ids_array is actually an array from the parsed JSON
-          next unless test_ids_array.is_a?(Array)
+        separator = "::REQ::"
 
-          line_number = line_number_str.to_i # Convert line number string to integer
+        line_to_augmented_ids_map.each do |line_number_str, augmented_ids_array|
+          next unless augmented_ids_array.is_a?(Array)
+          line_number = line_number_str.to_i
 
-          test_ids_array.each do |test_id|
-            next if test_id.nil? || test_id.empty? # Skip nil or empty test_ids
+          augmented_ids_array.each do |augmented_id|
+            next if augmented_id.nil? || augmented_id.empty?
 
-            test_case_map[test_id] ||= {}
-            test_case_map[test_id][file_name] ||= []
+            parts = augmented_id.to_s.split(separator, 2)
+            original_test_case_id = parts[0]
+            request_id = parts.length > 1 && !parts[1].empty? ? parts[1] : "UNKNOWN_REQUEST"
 
-            # Add line number if not already present for this test_id and file_name
-            unless test_case_map[test_id][file_name].include?(line_number)
-              test_case_map[test_id][file_name] << line_number
+            test_case_data_accumulator[original_test_case_id] ||= {}
+            test_case_data_accumulator[original_test_case_id][request_id] ||= {}
+            test_case_data_accumulator[original_test_case_id][request_id][file_name] ||= []
+
+            unless test_case_data_accumulator[original_test_case_id][request_id][file_name].include?(line_number)
+              test_case_data_accumulator[original_test_case_id][request_id][file_name] << line_number
             end
           end
         end
