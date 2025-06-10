@@ -46,7 +46,7 @@ module Coverband
       private
 
       def generate
-        current_coverage.each_with_object({}) do |(file, line_counts), new_results|
+        current_coverage.each_with_object({}) do |(file, current_file_coverage_data), new_results|
           ###
           # Eager filter:
           # Normally I would break this out into additional methods
@@ -57,14 +57,63 @@ module Coverband
           next unless @@ignore_patterns.none? { |pattern| file.match(pattern) } &&
             file.start_with?(@@project_directory)
 
-          # This handles Coverage branch support, setup by default in
-          # simplecov 0.18.x
-          arr_line_counts = line_counts.is_a?(Hash) ? line_counts[:lines] : line_counts
-          new_results[file] = if @@previous_coverage && @@previous_coverage[file]
-            prev_line_counts = @@previous_coverage[file].is_a?(Hash) ? @@previous_coverage[file][:lines] : @@previous_coverage[file]
-            array_diff(arr_line_counts, prev_line_counts)
+          previous_file_coverage_data = @@previous_coverage[file]
+
+          if current_file_coverage_data.is_a?(Hash) && current_file_coverage_data.key?(:lines)
+            # New format: { lines: [...], methods: {...} }
+            current_lines = current_file_coverage_data[:lines]
+            current_methods = current_file_coverage_data[:methods] # Hash: { method_id_array => count }
+
+            prev_lines_arr = nil
+            prev_methods_hash = nil
+            if previous_file_coverage_data.is_a?(Hash) && previous_file_coverage_data.key?(:lines)
+              prev_lines_arr = previous_file_coverage_data[:lines]
+              prev_methods_hash = previous_file_coverage_data[:methods]
+            elsif previous_file_coverage_data.is_a?(Array) # legacy, only lines
+              prev_lines_arr = previous_file_coverage_data
+            end
+
+            diffed_lines = prev_lines_arr ? array_diff(current_lines, prev_lines_arr) : current_lines
+            
+            diffed_methods = nil
+            if current_methods.is_a?(Hash)
+              diffed_methods = {}
+              current_methods.each do |method_id, current_count|
+                prev_count = prev_methods_hash ? (prev_methods_hash[method_id] || 0) : 0
+                # Ensure counts are integers before subtraction
+                diff_val = current_count.to_i - prev_count.to_i
+                diff_count = [0, diff_val].max # Ensure non-negative
+                diffed_methods[method_id] = diff_count if diff_count > 0
+              end
+              diffed_methods = nil if diffed_methods.empty?
+            end
+
+            # Only add to new_results if there's actual coverage to report
+            has_line_coverage = diffed_lines&.any? { |c| c&.positive? }
+            has_method_coverage = diffed_methods && !diffed_methods.empty?
+
+            if has_line_coverage || has_method_coverage
+              new_results[file] = { lines: diffed_lines || [] } # Ensure lines is always an array
+              new_results[file][:methods] = diffed_methods if has_method_coverage
+            end
           else
-            arr_line_counts
+            # Legacy format or lines-only: current_file_coverage_data is an Array
+            arr_line_counts = current_file_coverage_data
+            
+            prev_line_counts_arr_legacy = nil
+            if previous_file_coverage_data # Check if previous data exists
+              if previous_file_coverage_data.is_a?(Hash) && previous_file_coverage_data.key?(:lines)
+                prev_line_counts_arr_legacy = previous_file_coverage_data[:lines]
+              elsif previous_file_coverage_data.is_a?(Array)
+                prev_line_counts_arr_legacy = previous_file_coverage_data
+              end
+            end
+            
+            result_lines = prev_line_counts_arr_legacy ? array_diff(arr_line_counts, prev_line_counts_arr_legacy) : arr_line_counts
+            
+            if result_lines&.any? { |c| c&.positive? }
+              new_results[file] = result_lines
+            end
           end
         end
       end

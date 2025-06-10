@@ -14,6 +14,8 @@ module Coverband
       # redis format are required.
       ###
       REDIS_STORAGE_FORMAT_VERSION = "coverband_hash_4_0"
+      METHOD_STORAGE_KEY_SEGMENT = "methods" # New constant for method key segment
+      TEST_CASE_METHOD_SEPARATOR = "::TEST::" # New constant for test case separator in method fields
 
       JSON_PAYLOAD_EXPIRATION = 5 * 60
 
@@ -42,10 +44,15 @@ module Coverband
         old_type = type
         Coverband::TYPES.each do |type|
           self.type = type
-          file_keys = files_set
-          @redis.del(*file_keys) if file_keys.any?
-          @redis.del(files_key)
-          @redis.del(files_key(type))
+          # Clear line coverage data
+          line_file_keys = files_set # Gets keys for current type
+          @redis.del(*line_file_keys) if line_file_keys.any?
+          @redis.del(files_key) # Deletes the set itself for line coverage
+
+          # Clear method coverage data
+          method_file_keys = method_files_set # Gets method keys for current type
+          @redis.del(*method_file_keys) if method_file_keys.any?
+          @redis.del(method_files_key) # Deletes the set itself for method coverage
         end
         self.type = old_type
       end
@@ -53,44 +60,164 @@ module Coverband
       def clear_file!(file)
         file_hash = file_hash(file)
         relative_path_file = @relative_file_converter.convert(file)
-        Coverband::TYPES.each do |type|
-          @redis.del(key(relative_path_file, type, file_hash: file_hash))
+        Coverband::TYPES.each do |current_type|
+          # Clear line coverage for the file
+          line_key = key(relative_path_file, current_type, file_hash: file_hash)
+          @redis.del(line_key)
+          @redis.srem(files_key(current_type), line_key) # Remove from the set of line-covered files
+
+          # Clear method coverage for the file
+          method_key_for_file = method_coverage_key(relative_path_file, current_type, file_hash)
+          @redis.del(method_key_for_file)
+          @redis.srem(method_files_key(current_type), method_key_for_file) # Remove from the set of method-covered files
         end
-        @redis.srem(files_key, relative_path_file)
       end
 
-      def save_report(report, test_case_id)
+      def save_report(report, test_case_id = nil)
         report_time = Time.now.to_i
-        updated_time = (type == Coverband::EAGER_TYPE) ? nil : report_time
-        keys = []
-        report.each_slice(@save_report_batch_size) do |slice|
-          files_data = slice.map do |(file, data)|
-            relative_file = @relative_file_converter.convert(file)
-            file_hash = file_hash(relative_file)
-            key = key(relative_file, file_hash: file_hash)
-            keys << key
-            script_input(
-              key: key,
+        current_store_type = type
+        updated_time_for_lines = (current_store_type == Coverband::EAGER_TYPE) ? report_time.to_s : report_time.to_s
+
+        # Prepare batches for Lua scripts
+        line_coverage_batches = []
+        method_coverage_batches = []
+
+        # Ensure Lua script SHAs are loaded and are strings BEFORE any pipelining on @redis starts
+        # for this save_report operation. This prevents @redis.script(:load) from being called
+        # when @redis is in a pipelined state for this block, which would result in a Redis::Future.
+        loaded_hash_incr_script_sha = hash_incr_script
+        loaded_method_hash_incr_script_sha = method_hash_incr_script_sha
+
+        # Optional: Validate SHAs to ensure they are strings.
+        unless loaded_hash_incr_script_sha.is_a?(String) && loaded_method_hash_incr_script_sha.is_a?(String)
+          Coverband.configuration.logger.error("Coverband: Critical error - Lua script SHAs were not loaded as strings. " +
+            "hash_sha: #{loaded_hash_incr_script_sha.inspect}, method_sha: #{loaded_method_hash_incr_script_sha.inspect}. " +
+            "Coverage data may not be saved correctly.")
+          # Consider returning or raising an error if SHAs are not loaded,
+          # as proceeding will likely lead to errors.
+        end
+
+        report.each do |file_full_path, coverage_data_for_file|
+          relative_file = @relative_file_converter.convert(file_full_path)
+          current_file_content_hash = file_hash(file_full_path)
+
+          lines_data_array = nil
+          methods_data_hash = nil # Expected: { [method_ident_array] => count }
+
+          if coverage_data_for_file.is_a?(Hash) && coverage_data_for_file.key?(:lines)
+            lines_data_array = coverage_data_for_file[:lines]
+            methods_data_hash = coverage_data_for_file[:methods]
+          elsif coverage_data_for_file.is_a?(Array)
+            lines_data_array = coverage_data_for_file # Legacy or lines-only
+          end
+
+          # 1. Prepare line coverage data for its Lua script
+          if lines_data_array && lines_data_array.any? { |c| c&.positive? }
+            line_key_for_lua = key(relative_file, file_hash: current_file_content_hash)
+            line_coverage_batches << {
+              key: line_key_for_lua,
               file: relative_file,
-              file_hash: file_hash,
-              data: data,
+              file_hash: current_file_content_hash,
+              data: lines_data_array,
               report_time: report_time,
-              updated_time: updated_time
+              updated_time: updated_time_for_lines,
+              test_case_id: test_case_id # Pass test_case_id for line script
+            }
+          end
+          # 2. Prepare method coverage data for its Lua script
+          if methods_data_hash && methods_data_hash.any? { |_method_arr, count| count&.positive? }
+            method_key_for_lua = method_coverage_key(relative_file, current_store_type, current_file_content_hash)
+            
+            # Construct the method_coverage_payload for the Lua script
+            method_coverage_payload = {}
+            methods_data_hash.each do |method_ident_array, count|
+              next unless count&.positive?
+              method_fullname = construct_method_fullname(method_ident_array)
+              next if method_fullname.nil? || method_fullname.empty?
+              method_coverage_payload[method_fullname] = count.to_i
+            end
+
+            if method_coverage_payload.any?
+              method_coverage_batches << {
+                key: method_key_for_lua,
+                meta: {
+                  file: relative_file,
+                  file_hash: current_file_content_hash,
+                  first_updated_at: report_time.to_s,
+                  last_updated_at: report_time.to_s # Lua script handles first_updated_at logic
+                },
+                coverage: method_coverage_payload,
+                test_case_id: test_case_id ? test_case_id.to_s : "", # Pass test_case_id for method script
+                ttl: @ttl
+              }
+            end
+          end
+        end
+
+        # Execute Lua script for line coverage batches
+        line_keys_for_sadd = []
+        line_coverage_batches.each_slice(@save_report_batch_size) do |batch_slice|
+          # The existing script_input and lua execution for lines expects a slightly different structure
+          # It wraps multiple files' data into one JSON payload for ARGV[0] of lua script.
+          # We need to adapt or call it per file if that's simpler, or batch appropriately.
+          # For now, let's assume we process one file at a time for line_coverage_batches to simplify adaptation.
+          # This might be less efficient than the original batching if save_report_batch_size was > 1 for lines.
+          # Revisit batching for lines if performance is an issue.
+          
+          files_data_for_line_lua = batch_slice.map do |item|
+            line_keys_for_sadd << item[:key]
+            script_input(
+              key: item[:key],
+              file: item[:file],
+              file_hash: item[:file_hash],
+              data: item[:data],
+              report_time: item[:report_time],
+              updated_time: item[:updated_time]
+              # test_case_id is passed as a separate arg to EVALSHA for the line script
             )
           end
-          next unless files_data.any?
-          arguments_key = [@redis_namespace, SecureRandom.uuid].compact.join(".")
 
-          @redis.set(arguments_key, {ttl: @ttl, files_data: files_data}.to_json, ex: JSON_PAYLOAD_EXPIRATION)
-          @redis.evalsha(hash_incr_script, [arguments_key], [report_time, test_case_id])
+          if files_data_for_line_lua.any?
+            lua_arguments_key = [@redis_namespace, SecureRandom.uuid].compact.join(".")
+            lua_payload_for_lines = {ttl: @ttl, files_data: files_data_for_line_lua}.to_json
+            @redis.set(lua_arguments_key, lua_payload_for_lines, ex: JSON_PAYLOAD_EXPIRATION)
+            # The line script takes report_time and test_case_id as separate ARGV items
+            # We need to ensure the test_case_id from the first item in batch_slice is representative if batching > 1
+            # Or, if test_case_id can vary per file in a batch, this needs careful handling.
+            # Assuming test_case_id is uniform for the save_report call.
+            lua_test_case_id_arg = test_case_id ? test_case_id.to_s : ""
+            # Lua script handles first_updated_at internally if the key is new.
+            # It always sets last_updated_at from ARGV[1] (report_time from script_input's updated_time).
+            @redis.evalsha(loaded_hash_incr_script_sha, [lua_arguments_key], [report_time.to_s, lua_test_case_id_arg]) # <-- Corrected: use the local variable
+          end
         end
-        @redis.sadd(files_key, keys) if keys.any?
+        @redis.sadd(files_key(current_store_type), line_keys_for_sadd.uniq) if line_keys_for_sadd.any?
+
+        # Execute Lua script for method coverage batches
+        method_keys_for_sadd = []
+        method_coverage_batches.each_slice(@save_report_batch_size) do |batch_slice|
+          @redis.pipelined do |pipeline|
+            batch_slice.each do |item|
+              method_keys_for_sadd << item[:key]
+              payload_json = item.except(:key).to_json
+              # Use the pre-loaded SHA string for method coverage
+              pipeline.evalsha(loaded_method_hash_incr_script_sha, [item[:key]], [payload_json])
+            end
+          end
+        end
+        @redis.sadd(method_files_key(current_store_type), method_keys_for_sadd.uniq) if method_keys_for_sadd.any?
       end
 
       # NOTE: This method should be used for full coverage or filename coverage look ups
       # When paging code should use coverage_for_types and pull eager and runtime together as matched pairs
       def coverage(local_type = nil, opts = {})
         page_size = opts[:page_size] || 250
+        
+        # Return method test case mapping data if method_test_case_map is true
+        if opts[:test_case_map] && opts[:method_coverage]
+          return method_coverage(local_type, test_case_map: true)
+        end
+        
         # Determine the set of Redis keys to fetch based on options
         keys_to_fetch = if opts[:page]
           raise "call coverage_for_types with paging" # Paging should use a different path
@@ -219,7 +346,130 @@ module Coverband
         "not available"
       end
 
+      def method_coverage(local_type = nil, opts = {})
+        page_size = opts[:page_size] || 250
+        # Determine the set of Redis keys to fetch based on options
+        keys_to_fetch = if opts[:page]
+          raise "Paging not supported for method_coverage" 
+        elsif opts[:filename]
+          type_key_prefix = key_prefix(local_type)
+          method_files_set(local_type).select do |cache_key|
+            # Extract filename from method coverage key
+            cache_key.sub(type_key_prefix, "").sub(".#{METHOD_STORAGE_KEY_SEGMENT}.", "").match(short_name(opts[:filename]))
+          end || [] # Ensure it's an array
+        else
+          method_files_set(local_type)
+        end
+
+        # Fetch method coverage data from Redis in batches
+        method_data_from_redis = keys_to_fetch.each_slice(page_size).flat_map do |key_batch|
+          sleep(0.01 * rand(1..10)) # Avoid overloading Redis
+          @redis.pipelined do |pipeline|
+            key_batch.each do |key|
+              pipeline.hgetall(key)
+            end
+          end
+        end
+
+        if opts[:test_case_map]
+          # Process method test case mapping data
+          processed_test_case_data = {}
+          method_data_from_redis.each do |hash_from_redis|
+            add_method_test_case_map(processed_test_case_data, hash_from_redis)
+          end
+          
+          processed_test_case_data
+        else
+          # Return regular method coverage data
+          method_data_from_redis.each_with_object({}) do |data_from_redis, hash|
+            next if data_from_redis.empty?
+            
+            file = data_from_redis[FILE_KEY]
+            next unless file_hash(file) == data_from_redis[FILE_HASH]
+            
+            # Extract method coverage data
+            method_coverage = {}
+            data_from_redis.each do |key, value|
+              # Skip metadata fields
+              next if META_DATA_KEYS.include?(key) || key == FILE_KEY || key == FILE_LENGTH_KEY || key == 'test_cases'
+              
+              # Method keys are the actual method names/identifiers
+              method_coverage[key] = value.to_i
+            end
+            
+            hash[file] = {
+              "file_hash" => data_from_redis[FILE_HASH],
+              "first_updated_at" => data_from_redis[FIRST_UPDATED_KEY]&.to_i,
+              "last_updated_at" => data_from_redis[LAST_UPDATED_KEY]&.to_i,
+              "methods" => method_coverage
+            }
+          end
+        end
+      end
+
       private
+
+      # Helper method to construct method_fullname from method_ident_array
+      def construct_method_fullname(method_ident_array)
+        return nil if method_ident_array.length < 2
+        
+        class_component = method_ident_array[0]
+        method_name_sym = method_ident_array[1]
+        
+        # Fast path: if the third element is a clean string, use it directly
+        if method_ident_array.length >= 3 && 
+           method_ident_array[2].is_a?(String) && 
+           !method_ident_array[2].start_with?("#<")
+          return method_ident_array[2]
+        end
+        
+        # Get class name - prioritize methods that don't involve string parsing
+        class_name_str = if class_component.is_a?(String)
+                           class_component
+                         elsif class_component.respond_to?(:name) && 
+                               class_component.name.is_a?(String) && 
+                               !class_component.name.empty?
+                           class_component.name
+                         elsif class_component.to_s.start_with?("#<Class:")
+                           # Handle singleton class case with minimal string operations
+                           class_str = class_component.to_s
+                           start_idx = 8  # Length of "#<Class:"
+                           end_idx = class_str.index('(') || class_str.index('>')
+                           class_str[start_idx...end_idx] if end_idx
+                         else
+                           class_component.to_s
+                         end
+        
+        # Simple method name conversion
+        method_name_str = method_name_sym.to_s
+        
+        # Efficient separator determination
+        separator = if class_component.is_a?(Module) && !class_component.is_a?(Class)
+                      "."  # Module methods
+                    elsif class_component.to_s.start_with?("#<Class:")
+                      "."  # Singleton class methods
+                    else
+                      "#"  # Instance methods (default)
+                    end
+        
+        "#{class_name_str}#{separator}#{method_name_str}"
+      end
+
+      # Generates the Redis key for storing method coverage for a specific file.
+      def method_coverage_key(relative_file, type, file_hash)
+        prefix = key_prefix(type) # Uses the existing type-specific prefix
+        [prefix, METHOD_STORAGE_KEY_SEGMENT, relative_file, file_hash].join(".")
+      end
+
+      # Generates the Redis key for the Set that stores all method_coverage_keys for a given type.
+      def method_files_key(local_type = nil)
+        "#{key_prefix(local_type)}.#{METHOD_STORAGE_KEY_SEGMENT}_files"
+      end
+      
+      # Helper to get all method file keys for a given type
+      def method_files_set(local_type = nil)
+        @redis.smembers(method_files_key(local_type))
+      end
 
       # Populates test_case_data_accumulator with structure:
       # { original_test_case_id => { request_id => { file_name => [line_numbers] } } }
@@ -259,6 +509,54 @@ module Coverband
 
             unless test_case_data_accumulator[original_test_case_id][request_id][file_name].include?(line_number)
               test_case_data_accumulator[original_test_case_id][request_id][file_name] << line_number
+            end
+          end
+        end
+      end
+
+      # Populates the accumulator with method test case mappings.
+      # Format: { original_test_case_id => { request_id => { file_name => { method_fullname => true } } } }
+      def add_method_test_case_map(accumulator, hash_from_redis)
+        return if hash_from_redis.nil? || hash_from_redis.empty?
+
+        file_name = hash_from_redis[FILE_KEY] # 'file'
+        test_cases_json = hash_from_redis['test_cases']
+
+        return if file_name.nil? || test_cases_json.nil? || test_cases_json.empty?
+
+        begin
+          # Expected JSON: { "method_fullname1": ["aug_id_A", ...], ... }
+          method_to_augmented_ids_map = JSON.parse(test_cases_json)
+        rescue JSON::ParserError => e
+          Coverband.configuration.logger.warn "Coverband: Malformed JSON in method 'test_cases' for file #{file_name}: #{test_cases_json}. Error: #{e.message}"
+          return
+        end
+
+        return unless method_to_augmented_ids_map.is_a?(Hash)
+
+        separator = "::REQ::" # As defined by add_test_case_map for lines
+
+        method_to_augmented_ids_map.each do |method_fullname, augmented_ids_array|
+          next unless augmented_ids_array.is_a?(Array)
+
+          augmented_ids_array.each do |augmented_id|
+            next if augmented_id.nil? || augmented_id.empty?
+
+            parts = augmented_id.to_s.split(separator, 2)
+            original_test_case_id = parts[0]
+            request_id = parts.length > 1 && !parts[1].empty? ? parts[1] : "UNKNOWN_REQUEST"
+
+            # Initialize the structure if not already present
+            accumulator[original_test_case_id] ||= {}
+            accumulator[original_test_case_id][request_id] ||= {}
+            
+            # Group by file first, then collect methods for each file
+            # This makes the structure match the line coverage format more closely
+            accumulator[original_test_case_id][request_id][file_name] ||= []
+            
+            # Add the method to the array for this file if not already present
+            unless accumulator[original_test_case_id][request_id][file_name].include?(method_fullname)
+              accumulator[original_test_case_id][request_id][file_name] << method_fullname
             end
           end
         end
@@ -318,9 +616,20 @@ module Coverband
         @hash_incr_script ||= @redis.script(:load, lua_script_content)
       end
 
+      # Loads and caches the SHA for the method coverage Lua script.
+      def method_hash_incr_script_sha
+        @method_hash_incr_script_sha ||= @redis.script(:load, method_lua_script_content)
+      end
+
       def lua_script_content
         File.read(File.join(
           File.dirname(__FILE__), "../../../lua/lib/persist-coverage.lua"
+        ))
+      end
+
+      def method_lua_script_content
+        File.read(File.join(
+          File.dirname(__FILE__), "../../../lua/lib/persist-method-coverage.lua"
         ))
       end
 

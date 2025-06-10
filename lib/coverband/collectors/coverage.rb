@@ -76,8 +76,23 @@ module Coverband
       private
 
       def filtered_files(new_results)
-        new_results.select! { |_file, coverage| coverage.any? { |value| value&.nonzero? } }
-        new_results
+        new_results.select! do |_file, coverage_data_for_file|
+          if coverage_data_for_file.is_a?(Hash) && coverage_data_for_file.key?(:lines)
+            # New format: { lines: [...], methods: {...} }
+            lines_present = coverage_data_for_file[:lines]&.any? { |value| value&.nonzero? }
+            methods_present = false
+            if coverage_data_for_file.key?(:methods) && coverage_data_for_file[:methods].is_a?(Hash)
+              methods_present = coverage_data_for_file[:methods]&.any? { |_method_ident_array, count| count&.nonzero? }
+            end
+            lines_present || methods_present
+          elsif coverage_data_for_file.is_a?(Array)
+            # Old format or lines-only: [...]
+            coverage_data_for_file.any? { |value| value&.nonzero? }
+          else
+            false # Unknown format, filter out
+          end
+        end
+        new_results # select! modifies in place, but returning is fine for clarity
       end
 
       def initialize
@@ -94,12 +109,12 @@ module Coverband
           puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
         elsif ::Coverage.respond_to?(:state)
           if ::Coverage.state == :idle
-            ::Coverage.start(oneshot_lines: Coverband.configuration.use_oneshot_lines_coverage)
+            ::Coverage.start(lines: true, methods: true)
           elsif ::Coverage.state == :suspended
             ::Coverage.resume
           end
         else
-          ::Coverage.start(oneshot_lines: Coverband.configuration.use_oneshot_lines_coverage) unless ::Coverage.running?
+          ::Coverage.start(lines: true, methods: true) unless ::Coverage.running?
         end
         reset_instance
       end

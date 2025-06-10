@@ -98,6 +98,8 @@ module Coverband
               [200, coverband_headers(content_type: "text/json"), [load_file_details]]
             when %r{\/load_test_case_details}
               [200, coverband_headers(content_type: "text/json"), [load_test_case_details]]
+            when %r{\/load_method_test_case_details} # New route for method test case details
+              [200, coverband_headers(content_type: "text/json"), [load_method_test_case_details]]
             when %r{\/json}
               [200, coverband_headers(content_type: "text/json"), [json]]
             when %r{\/report_json}
@@ -186,6 +188,16 @@ module Coverband
         # The data from the store is now already in the desired final format:
         # { original_test_case_id => { request_id => { file_name => [line_numbers] } } }
         processed_data = Coverband.configuration.store.coverage(nil, {test_case_map: true})
+        processed_data.to_json
+      end
+
+      def load_method_test_case_details
+        # Fetches method coverage test case data
+        # Structure: { original_test_case_id => { request_id => { file_name => { method_name => count } } } }
+        # Or, if merged with lines in the future by combined_coverage with test_case_map: true,
+        # it would be: { original_test_case_id => { request_id => { file_name => { "lines" => [], "methods" => {} } } } }
+        # For now, assuming method_coverage returns the direct method test case map.
+        processed_data = Coverband.configuration.store.coverage(nil, {test_case_map: true, method_coverage: true})
         processed_data.to_json
       end
 
