@@ -67,6 +67,7 @@ module Coverband
           end
         end
       rescue => e
+        Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_id}")
         @logger&.error "coverage failed to store"
         @logger&.error "Coverband Error: #{e.inspect} #{e.message}"
         e.backtrace.each { |line| @logger&.error line } if @verbose

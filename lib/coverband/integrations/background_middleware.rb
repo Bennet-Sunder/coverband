@@ -12,6 +12,7 @@ module Coverband
       reporting_id_for_coverage = nil
 
       if original_test_case_id
+        Rails.logger.info("Coverband: Coverage reporting enabled for test case ID: #{original_test_case_id}")
         # Construct a unique identifier for the request part using method and path
         # Example: "GET|/users/1"
         request_identifier = "#{env['REQUEST_METHOD']}|#{env['PATH_INFO']}"
