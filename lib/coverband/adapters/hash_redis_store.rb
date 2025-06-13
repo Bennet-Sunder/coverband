@@ -125,6 +125,7 @@ module Coverband
             }
           end
           # 2. Prepare method coverage data for its Lua script
+          Rails.logger.info "Coverband: methods_data_hash #{methods_data_hash}"
           if methods_data_hash && methods_data_hash.any? { |_method_arr, count| count&.positive? }
             method_key_for_lua = method_coverage_key(relative_file, current_store_type, current_file_content_hash)
             
@@ -136,7 +137,7 @@ module Coverband
               next if method_fullname.nil? || method_fullname.empty?
               method_coverage_payload[method_fullname] = count.to_i
             end
-
+            Rails.logger.info "Coverband: method_coverage_payload #{method_coverage_payload}"
             if method_coverage_payload.any?
               method_coverage_batches << {
                 key: method_key_for_lua,
@@ -180,12 +181,15 @@ module Coverband
           if files_data_for_line_lua.any?
             lua_arguments_key = [@redis_namespace, SecureRandom.uuid].compact.join(".")
             lua_payload_for_lines = {ttl: @ttl, files_data: files_data_for_line_lua}.to_json
+            
+            Rails.logger.info "Coverband: lua_payload_for_lines #{lua_payload_for_lines}"
             @redis.set(lua_arguments_key, lua_payload_for_lines, ex: JSON_PAYLOAD_EXPIRATION)
             # The line script takes report_time and test_case_id as separate ARGV items
             # We need to ensure the test_case_id from the first item in batch_slice is representative if batching > 1
             # Or, if test_case_id can vary per file in a batch, this needs careful handling.
             # Assuming test_case_id is uniform for the save_report call.
             lua_test_case_id_arg = test_case_id ? test_case_id.to_s : ""
+            Rails.logger.info "Coverband: lua_test_case_id_arg #{lua_test_case_id_arg}"
             # Lua script handles first_updated_at internally if the key is new.
             # It always sets last_updated_at from ARGV[1] (report_time from script_input's updated_time).
             @redis.evalsha(loaded_hash_incr_script_sha, [lua_arguments_key], [report_time.to_s, lua_test_case_id_arg]) # <-- Corrected: use the local variable
@@ -198,6 +202,7 @@ module Coverband
         method_coverage_batches.each_slice(@save_report_batch_size) do |batch_slice|
           @redis.pipelined do |pipeline|
             batch_slice.each do |item|
+              Rails.logger.info "Coverband: Processing method coverage item: #{item.inspect}"
               method_keys_for_sadd << item[:key]
               payload_json = item.except(:key).to_json
               # Use the pre-loaded SHA string for method coverage
@@ -378,6 +383,15 @@ module Coverband
             add_method_test_case_map(processed_test_case_data, hash_from_redis)
           end
           
+          # Sort method names for each file (for consistency with line test case map)
+          processed_test_case_data.each_value do |requests_map|
+            requests_map.each_value do |files_and_methods_map|
+              files_and_methods_map.each_value do |method_names_array|
+                method_names_array.sort!
+              end
+            end
+          end
+          
           processed_test_case_data
         else
           # Return regular method coverage data
@@ -515,8 +529,9 @@ module Coverband
       end
 
       # Populates the accumulator with method test case mappings.
-      # Format: { original_test_case_id => { request_id => { file_name => { method_fullname => true } } } }
+      # Format: { original_test_case_id => { request_id => { file_name => [method_names] } } }
       def add_method_test_case_map(accumulator, hash_from_redis)
+        Rails.logger.info("Coverband: add_method_test_case_map called with hash_from_redis: #{hash_from_redis.inspect}")
         return if hash_from_redis.nil? || hash_from_redis.empty?
 
         file_name = hash_from_redis[FILE_KEY] # 'file'
@@ -525,7 +540,7 @@ module Coverband
         return if file_name.nil? || test_cases_json.nil? || test_cases_json.empty?
 
         begin
-          # Expected JSON: { "method_fullname1": ["aug_id_A", ...], ... }
+          # Expected JSON: { "method_fullname1": ["{\"a\":\"1\",\"b\":\"GET\",...}", ...], ... }
           method_to_augmented_ids_map = JSON.parse(test_cases_json)
         rescue JSON::ParserError => e
           Coverband.configuration.logger.warn "Coverband: Malformed JSON in method 'test_cases' for file #{file_name}: #{test_cases_json}. Error: #{e.message}"
@@ -534,29 +549,53 @@ module Coverband
 
         return unless method_to_augmented_ids_map.is_a?(Hash)
 
-        separator = "::REQ::" # As defined by add_test_case_map for lines
-
         method_to_augmented_ids_map.each do |method_fullname, augmented_ids_array|
           next unless augmented_ids_array.is_a?(Array)
+          augmented_ids_array.each do |augmented_id_json|
+            next if augmented_id_json.nil? || augmented_id_json.empty?
 
-          augmented_ids_array.each do |augmented_id|
-            next if augmented_id.nil? || augmented_id.empty?
+            # Parse the JSON object that contains request details
+            begin
+              request_data = JSON.parse(augmented_id_json)
+              # Extract key information from the parsed JSON
+              test_case_id = request_data['a'] # Unique ID/request number
+              http_method = request_data['b']  # HTTP method (GET, POST, etc.)
+              request_path = request_data['c'] # Request path/URL
+              status_code = request_data['d']  # HTTP status code
+              
+              # Create a more descriptive request_id that includes HTTP method and path
+              request_id = "#{test_case_id}::#{http_method}::#{request_path}::#{status_code}"
+              
+              # Use test_case_id as the primary grouping key
+              original_test_case_id = test_case_id
 
-            parts = augmented_id.to_s.split(separator, 2)
-            original_test_case_id = parts[0]
-            request_id = parts.length > 1 && !parts[1].empty? ? parts[1] : "UNKNOWN_REQUEST"
-
-            # Initialize the structure if not already present
-            accumulator[original_test_case_id] ||= {}
-            accumulator[original_test_case_id][request_id] ||= {}
-            
-            # Group by file first, then collect methods for each file
-            # This makes the structure match the line coverage format more closely
-            accumulator[original_test_case_id][request_id][file_name] ||= []
-            
-            # Add the method to the array for this file if not already present
-            unless accumulator[original_test_case_id][request_id][file_name].include?(method_fullname)
-              accumulator[original_test_case_id][request_id][file_name] << method_fullname
+              # Initialize the structure if not already present
+              accumulator[original_test_case_id] ||= {}
+              accumulator[original_test_case_id][request_id] ||= {}
+              
+              # Group by file first, then collect methods for each file
+              accumulator[original_test_case_id][request_id][file_name] ||= []
+              
+              # Add the method to the array for this file if not already present
+              unless accumulator[original_test_case_id][request_id][file_name].include?(method_fullname)
+                accumulator[original_test_case_id][request_id][file_name] << method_fullname
+              end
+            rescue JSON::ParserError => e
+              # If we can't parse the JSON object, fall back to using the raw string
+              Coverband.configuration.logger.warn "Coverband: Unable to parse request data JSON for method #{method_fullname}: #{augmented_id_json}. Error: #{e.message}"
+              
+              # Use the raw JSON string as both the original ID and request ID
+              original_test_case_id = "raw_id"
+              request_id = augmented_id_json.to_s[0..50] # Limit length for display purposes
+              
+              # Initialize and populate the accumulator as before
+              accumulator[original_test_case_id] ||= {}
+              accumulator[original_test_case_id][request_id] ||= {}
+              accumulator[original_test_case_id][request_id][file_name] ||= []
+              
+              unless accumulator[original_test_case_id][request_id][file_name].include?(method_fullname)
+                accumulator[original_test_case_id][request_id][file_name] << method_fullname
+              end
             end
           end
         end

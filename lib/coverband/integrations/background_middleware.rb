@@ -2,45 +2,68 @@
 
 module Coverband
   class BackgroundMiddleware
+    # Field mapping between readable names and single-letter keys for storage
+    FIELD_MAPPING = {
+      test_id: 'a',
+      action_type: 'b',
+      action_url: 'c',
+      response_code: 'd'
+    }.freeze
+    
+    REVERSE_MAPPING = FIELD_MAPPING.invert.freeze
+    
     def initialize(app)
       @app = app
     end
 
     def call(env)
       original_test_case_id = env['HTTP_X_TEST_CASE_ID']
-      # This variable will hold the (potentially augmented) ID used for coverage reporting
-      reporting_id_for_coverage = nil
-
-      if original_test_case_id
+      
+      test_case_data = nil
+      reporting_id = nil
+      
+      if original_test_case_id&.present?
         Rails.logger.info("Coverband: Coverage reporting enabled for test case ID: #{original_test_case_id}")
-        # Construct a unique identifier for the request part using method and path
-        # Example: "GET|/users/1"
-        request_identifier = "#{env['REQUEST_METHOD']}|#{env['PATH_INFO']}"
         
-        # Combine with the original test case ID using a clear separator "::REQ::"
-        # Example: "your_test_case_id::REQ::GET|/users/1"
-        reporting_id_for_coverage = "#{original_test_case_id}::REQ::#{request_identifier}"
-
-        # Set the augmented ID in Thread.current so it can be picked up by Coverband.report_coverage
-        # This is also useful if other parts of the system (like Sidekiq jobs spawned from this request)
-        # rely on Thread.current[:coverband_test_case_id].
-        Thread.current[:coverband_test_case_id] = reporting_id_for_coverage
+        test_case_data = {
+          test_id: original_test_case_id,
+          action_type: env['REQUEST_METHOD'],
+          action_url: "#{env['HTTP_HOST']}#{env['PATH_INFO']}",
+          response_code: nil
+        }
+        
+        storage_data = compress_keys(test_case_data)
+        Thread.current[:coverband_test_case_id] = JSON.generate(storage_data)
+        Rails.logger.info("Coverband: Initial test case data: #{Thread.current[:coverband_test_case_id]}")
       else
-        # If no original_test_case_id, ensure Thread.current is nil for this thread.
         Thread.current[:coverband_test_case_id] = nil
       end
 
-      @app.call(env)
-    ensure
-      # Report coverage only if an original_test_case_id was present for this request.
-      # The ID used for reporting will be the augmented one (reporting_id_for_coverage).
-      if original_test_case_id && reporting_id_for_coverage
-        ::Coverband.report_coverage(reporting_id_for_coverage)
-      end
+      status, headers, response = @app.call(env)
       
-      # Always clear the Thread.current variable after the request to prevent leakage 
-      # to subsequent requests handled by this thread that are not part of this test case.
+      if test_case_data
+        test_case_data[:response_code] = status
+        storage_data = compress_keys(test_case_data)
+        reporting_id = JSON.generate(storage_data)
+        Rails.logger.info("Coverband: Updated test case data with status code: #{reporting_id}")
+      end
+
+      [status, headers, response]
+    ensure
+      if test_case_data && reporting_id
+        ::Coverband.report_coverage(reporting_id)
+      end
       Thread.current[:coverband_test_case_id] = nil
+    end
+    
+    private
+    
+    def compress_keys(data)
+      data.transform_keys { |k| FIELD_MAPPING[k] || k }
+    end
+    
+    def expand_keys(data)
+      data.transform_keys { |k| REVERSE_MAPPING[k] || k }
     end
   end
 end

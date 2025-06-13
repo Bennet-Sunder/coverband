@@ -107,23 +107,40 @@ if payload.test_case_id and #payload.test_case_id > 0 then
     test_cases_map = {}
   end
 
+  -- Debug: Output the full test_case_id to Redis log
+  redis.log(redis.LOG_WARNING, "Processing test_case_id: " .. payload.test_case_id)
+
   for method_name, count in pairs(payload.coverage) do
     if count > 0 then
       if test_cases_map[method_name] == nil or type(test_cases_map[method_name]) ~= 'table' then
         test_cases_map[method_name] = {}
       end
-      test_cases_map[method_name][payload.test_case_id] = true
+      
+      -- Store the test_case_id directly in an array instead of using it as a table key
+      local method_test_cases = test_cases_map[method_name]
+      local found = false
+      
+      -- Check if this test_case_id already exists in the array
+      for i, existing_id in ipairs(method_test_cases) do
+        if existing_id == payload.test_case_id then
+          found = true
+          break
+        end
+      end
+      
+      -- Add it only if it's not already in the array
+      if not found then
+        table.insert(method_test_cases, payload.test_case_id)
+      end
     end
   end
 
+  -- No need for the extra transformation step, the IDs are already stored as an array
   local final_test_cases_map_for_json = {}
-  for method_name, id_set in pairs(test_cases_map) do
-    if type(id_set) == 'table' then
-      local ids_array = {}
-      for id, _ in pairs(id_set) do
-        table.insert(ids_array, tostring(id)) -- Ensure all elements are strings
-      end
-      table.sort(ids_array) -- Now sorting an array of strings
+  for method_name, ids_array in pairs(test_cases_map) do
+    if type(ids_array) == 'table' then
+      -- Just sort the array to maintain consistent ordering
+      table.sort(ids_array)
       final_test_cases_map_for_json[method_name] = ids_array
     end
   end

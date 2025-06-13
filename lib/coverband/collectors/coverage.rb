@@ -51,6 +51,7 @@ module Coverband
       end
 
       def report_coverage(test_case_id = nil)
+        Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_id}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
           files_with_line_usage = filtered_files(Delta.results)
@@ -63,6 +64,7 @@ module Coverband
                 @deferred_eager_loading_data = nil
               end
             end
+            Rails.logger.info("Coverband: save_report test case ID: #{test_case_id}")
             @store.save_report(files_with_line_usage, test_case_id)
           end
         end
@@ -77,6 +79,7 @@ module Coverband
       private
 
       def filtered_files(new_results)
+        Rails.logger.info("Coverband: Results #{new_results}")
         new_results.select! do |_file, coverage_data_for_file|
           if coverage_data_for_file.is_a?(Hash) && coverage_data_for_file.key?(:lines)
             # New format: { lines: [...], methods: {...} }
