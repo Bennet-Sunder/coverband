@@ -50,7 +50,22 @@ module Coverband
         @store.type = old_coverage_type
       end
 
+      def report_new_coverage(test_case_details = {})
+        Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
+        @semaphore.synchronize do
+          raise "no Coverband store set" unless @store
+          @store.save_method_report(filtered_files(Delta.results), test_case_details)
+        end
+      rescue => e
+        Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
+        @logger&.error "coverage failed to store"
+        @logger&.error "Coverband Error: #{e.inspect} #{e.message}"
+        e.backtrace.each { |line| @logger&.error line } if @verbose
+        raise e if @test_env      
+      end
+
       def report_coverage(test_case_id = nil)
+        return
         Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_id}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
@@ -79,7 +94,6 @@ module Coverband
       private
 
       def filtered_files(new_results)
-        Rails.logger.info("Coverband: Results #{new_results}")
         new_results.select! do |_file, coverage_data_for_file|
           if coverage_data_for_file.is_a?(Hash) && coverage_data_for_file.key?(:lines)
             # New format: { lines: [...], methods: {...} }
