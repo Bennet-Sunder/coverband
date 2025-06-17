@@ -19,7 +19,9 @@ module Coverband
         Rails.logger.info "Coverband: Starting coverage for test case ID #{test_case_data}"
         yield
       ensure
-        ::Coverband.report_new_coverage(test_case_data)
+        if test_case_data
+          ::Coverband.report_new_coverage(test_case_data)
+        end
       end
     end
   end

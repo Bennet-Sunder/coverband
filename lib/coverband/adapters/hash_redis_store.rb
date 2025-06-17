@@ -108,7 +108,7 @@ module Coverband
         else
           # This is a request
           # Create a consistent request ID using available information
-          entity_id = "#{test_id}::#{action_type || 'UNKNOWN'}::#{action_url || 'UNKNOWN'}::#{response_code || 'UNKNOWN'}"
+          entity_id = "#{action_type || 'UNKNOWN'}::#{action_url || 'UNKNOWN'}::#{response_code || 'UNKNOWN'}"
           entity_type = REQUEST_TRACE_KEY
         end
         
@@ -116,7 +116,12 @@ module Coverband
         entity_key = "#{entity_type}:#{entity_id}"
         test_case_key = "#{TEST_CASE_MAP_KEY}:#{test_id}"
         sizes_key = "#{entity_type}:sizes"
-        
+
+        # Check if entity_key already exists
+        if @redis.exists(entity_key)
+          Rails.logger.info("Coverband: #{entity_key} already exists")
+          return
+        end
         # Prepare data
         trace_json = method_trace.to_json
         json_size_bytes = trace_json.bytesize.to_s
@@ -264,45 +269,48 @@ module Coverband
       # Extract test case method coverage data directly from Redis
       # Returns a structure that matches the format expected by the test impact analysis tools
       # @param test_case_ids [Array<String>] Optional list of test case IDs to extract (default: all)
-      # @return [Hash] Format: { test_case_id => { entity_id => { file_path => [method_names] } } }
+      # @return [Hash] Format: { coverage_data: { test_case_id => { entity_id => { file_path => [method_names] } } }, total_redis_data_size_mb: Float }
       def extract_test_case_method_coverage(test_case_ids = nil)
-        # Get all test case IDs if not specified
+        total_redis_data_size_bytes = 0
+
+        # Add size of the initial index key
+        total_redis_data_size_bytes += TEST_CASE_INDEX_KEY.bytesize
         all_test_case_ids = @redis.smembers(TEST_CASE_INDEX_KEY)
+        # Add size of the values (test case IDs) from the index
+        all_test_case_ids.each { |id| total_redis_data_size_bytes += id.bytesize }
         
         # Filter by test case IDs if specified
-        test_case_ids = test_case_ids ? all_test_case_ids.select { |id| test_case_ids.include?(id) } : all_test_case_ids
+        current_test_case_ids = test_case_ids ? all_test_case_ids.select { |id| test_case_ids.include?(id) } : all_test_case_ids
         
         result = {}
         
-        test_case_ids.each do |test_case_id|
+        current_test_case_ids.each do |test_case_id|
           test_case_key = "#{TEST_CASE_MAP_KEY}:#{test_case_id}"
+          total_redis_data_size_bytes += test_case_key.bytesize # Add size of the test case key
+          
           entity_ids = @redis.smembers(test_case_key)
+          # Add size of the entity IDs retrieved for this test case
+          entity_ids.each { |id| total_redis_data_size_bytes += id.bytesize }
           
           next if entity_ids.empty?
           result[test_case_id] = {}
           
           entity_ids.each do |entity_id|
-            # Determine if this is a request or worker entity
-            if entity_id.start_with?("worker::")
-              entity_key = "#{WORKER_TRACE_KEY}:#{entity_id}"
-            else
-              entity_key = "#{REQUEST_TRACE_KEY}:#{entity_id}"
-            end
+            entity_key_prefix = entity_id.start_with?("worker::") ? WORKER_TRACE_KEY : REQUEST_TRACE_KEY
+            entity_key = "#{entity_key_prefix}:#{entity_id}" # Construct the full entity key
             
-            # Get the trace JSON for this entity
+            total_redis_data_size_bytes += entity_key.bytesize # Add size of the entity key
+            
             trace_json = @redis.get(entity_key)
             next unless trace_json
             
+            total_redis_data_size_bytes += trace_json.bytesize # Add size of the trace_json value
+            
             begin
-              # Parse the trace data (mapping of file paths to method names)
               trace_data = JSON.parse(trace_json)
-              
-              # Store this entity's data
               result[test_case_id][entity_id] = {}
               
-              # Add file paths and methods to the result
               trace_data.each do |file_path, methods|
-                # Ensure file path has the expected format
                 formatted_file_path = file_path.start_with?('./') ? file_path : "./#{file_path}"
                 result[test_case_id][entity_id][formatted_file_path] = methods
               end
@@ -311,11 +319,11 @@ module Coverband
             end
           end
           
-          # Remove test case if it has no entities with valid data
           result.delete(test_case_id) if result[test_case_id].empty?
         end
         
-        result
+        total_redis_data_size_mb = total_redis_data_size_bytes / (1024.0 * 1024.0)
+        { coverage_data: result, total_redis_data_size_mb: total_redis_data_size_mb }
       end
       
       # Alias to maintain backward compatibility
