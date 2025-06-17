@@ -17,6 +17,7 @@ module Coverband
     end
 
     def call(env)
+      ::Coverage.result(clear: true, stop: false)
       original_test_case_id = env['HTTP_X_TEST_CASE_ID']
       
       test_case_data = nil
