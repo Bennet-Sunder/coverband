@@ -77,6 +77,8 @@ module Coverband
             case request_path_info
             when %r{\/clear_file}
               clear_file
+            when %r{\/clear_method_coverage}
+              clear_method_coverage
             when %r{\/clear}
               clear
             else
@@ -197,7 +199,7 @@ module Coverband
         # Or, if merged with lines in the future by combined_coverage with test_case_map: true,
         # it would be: { original_test_case_id => { request_id => { file_name => { "lines" => [], "methods" => {} } } } }
         # For now, assuming method_coverage returns the direct method test case map.
-        processed_data = Coverband.configuration.store.coverage(nil, {test_case_map: true, method_coverage: true})
+        processed_data = Coverband.configuration.store.extract_test_case_method_coverage
         processed_data.to_json
       end
 
@@ -216,6 +218,17 @@ module Coverband
           filename = request.params["filename"]
           Coverband.configuration.store.clear_file!(filename)
           notice = "coverage for file #{filename} cleared"
+        else
+          notice = "web_enable_clear isn't enabled in your configuration"
+        end
+        [302, {"Location" => "#{base_path}?notice=#{notice}"}, []]
+      end
+
+      def clear_method_coverage
+        if Coverband.configuration.web_enable_clear
+          # Assuming method coverage clearing logic is similar to file clearing
+          Coverband.configuration.store.clear_method_coverage!
+          notice = "method coverage cleared"
         else
           notice = "web_enable_clear isn't enabled in your configuration"
         end

@@ -4,8 +4,9 @@ module Coverband
   module Integrations
     class SidekiqClientMiddleware
       def call(_worker_class, job, _queue, _redis_pool)
-        if (test_case_id = Thread.current[:coverband_test_case_id])
-          job['coverband_test_case_id'] = test_case_id
+        Rails.logger.info "Coverband: Adding test case ID to Sidekiq job #{Thread.current[:coverband_test_case_id]}"
+        if Thread.current[:coverband_test_case_id]
+          job['coverband_test_case_id'] = Thread.current[:coverband_test_case_id]
         end
         yield
       end
@@ -13,10 +14,14 @@ module Coverband
 
     class SidekiqServerMiddleware
       def call(_worker, job, _queue)
-        test_case_id = job['coverband_test_case_id']
+        test_case_data = job['coverband_test_case_id']
+        test_case_data['response_code'] = _worker.class
+        Rails.logger.info "Coverband: Starting coverage for test case ID #{test_case_data}"
         yield
       ensure
-        ::Coverband.report_coverage(test_case_id) if test_case_id
+        if test_case_data
+          ::Coverband.report_new_coverage(test_case_data)
+        end
       end
     end
   end

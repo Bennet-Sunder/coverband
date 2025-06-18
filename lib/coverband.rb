@@ -70,6 +70,10 @@ module Coverband
     coverage_instance.report_coverage(test_case_id)
   end
 
+  def self.report_new_coverage(test_case_details = {})
+    coverage_instance.report_new_coverage(test_case_details)
+  end
+
   def self.configuration
     @configuration ||= Configuration.new
   end
