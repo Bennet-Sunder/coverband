@@ -108,7 +108,7 @@ module Coverband
         else
           # This is a request
           # Create a consistent request ID using available information
-          entity_id = "#{action_type || 'UNKNOWN'}::#{action_url || 'UNKNOWN'}::#{response_code || 'UNKNOWN'}"
+          entity_id = "#{test_id}::#{action_type || 'UNKNOWN'}::#{action_url || 'UNKNOWN'}::#{response_code || 'UNKNOWN'}"
           entity_type = REQUEST_TRACE_KEY
         end
         
