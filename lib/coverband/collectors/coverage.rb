@@ -115,7 +115,6 @@ module Coverband
 
       def initialize
         @semaphore = Mutex.new
-
         require "coverage"
         if RUBY_PLATFORM == "java"
           unless ::Coverage.respond_to?(:line_stub)
@@ -127,12 +126,13 @@ module Coverband
           puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
         elsif ::Coverage.respond_to?(:state)
           if ::Coverage.state == :idle
-            ::Coverage.start(lines: true, methods: true)
+            puts("ENV['DISABLE_AUTO_START'] #{ENV["DISABLE_AUTO_START"]}")
+            ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
           elsif ::Coverage.state == :suspended
             ::Coverage.resume
           end
         else
-          ::Coverage.start(lines: true, methods: true) unless ::Coverage.running?
+          ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
         end
         reset_instance
       end

@@ -17,24 +17,31 @@ module Coverband
     end
 
     def call(env)
+      Rails.logger.info("Coverage Running?: #{::Coverage.running?}")
       original_test_case_id = env['HTTP_X_TEST_CASE_ID']
-      timing_data = {}
+      timing_data = {
+        tracing_time: 0,
+        app_call_time: 0,
+        reporting_time: 0
+      }
       
       test_case_data = nil
+      test_case_data = {
+        test_id: original_test_case_id,
+        action_type: env['REQUEST_METHOD'],
+        action_url: "#{env['HTTP_HOST']}#{env['PATH_INFO']}",
+        response_code: nil
+      }
+
       if original_test_case_id&.present?
         # Measure tracing time
-        tracing_time = Benchmark.realtime do
-          ::Coverage.result(clear: true, stop: false)
+        unless ENV['DISABLE_AUTO_START']
+          tracing_time = Benchmark.realtime do
+            ::Coverage.result(clear: true, stop: false) 
+          end
+          timing_data[:tracing_time] = tracing_time
         end
-        timing_data[:tracing_time] = tracing_time
-
         Rails.logger.info("Coverband: Coverage reporting enabled for test case ID: #{original_test_case_id}")
-        test_case_data = {
-          test_id: original_test_case_id,
-          action_type: env['REQUEST_METHOD'],
-          action_url: "#{env['HTTP_HOST']}#{env['PATH_INFO']}",
-          response_code: nil
-        }
         Thread.current[:coverband_test_case_id] = test_case_data
         Rails.logger.info("Coverband: Initial test case data: #{Thread.current[:coverband_test_case_id]}")
       else
@@ -53,14 +60,15 @@ module Coverband
       [status, headers, response]
     ensure
       Thread.current[:coverband_test_case_id] = nil
-      if test_case_data
+      if test_case_data && !ENV['DISABLE_AUTO_START']
         reporting_time = Benchmark.realtime do
           ::Coverband.report_new_coverage(test_case_data)
         end
         timing_data[:reporting_time] = reporting_time
-        Rails.logger.info("Coverband: Timing data for test case ID #{test_case_data[:action_type]}: #{timing_data}")
-        NewRelic::Agent.notice_error(StandardError.new("Coverband Timing Data"), test_case_data: test_case_data, timing_data: timing_data)
       end
+      Rails.logger.info("Coverband: Timing data for test case ID #{test_case_data[:action_type]}: #{timing_data}")
+      NewRelic::Agent.notice_error(StandardError.new("Coverband Timing Data"), test_case_data: test_case_data, timing_data: timing_data)
+
     end
     
     private
