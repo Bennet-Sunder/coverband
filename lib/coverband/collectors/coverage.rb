@@ -54,7 +54,15 @@ module Coverband
         Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
-          @store.save_method_report(filtered_files(Delta.results), test_case_details)
+          final_processing_time = 0
+          test_report = {}
+          unless ENV['DISABLE_AUTO_START']
+            final_processing_time = Benchmark.realtime do
+              test_report = filtered_files(Delta.results) 
+            end
+          end
+          @store.save_method_report(test_report, test_case_details)
+          final_processing_time
         end
       rescue => e
         Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")

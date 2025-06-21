@@ -60,13 +60,16 @@ module Coverband
       [status, headers, response]
     ensure
       Thread.current[:coverband_test_case_id] = nil
+      final_processing_time = 0
       if test_case_data && !ENV['DISABLE_AUTO_START']
         reporting_time = Benchmark.realtime do
-          ::Coverband.report_new_coverage(test_case_data)
+          final_processing_time = ::Coverband.report_new_coverage(test_case_data)
         end
         timing_data[:reporting_time] = reporting_time
+        timing_data[:final_processing_time] = final_processing_time
       end
       Rails.logger.info("Coverband: Timing data for test case ID #{test_case_data[:action_type]}: #{timing_data}")
+      FsLogger.journey_service_requests("#{::Coverage.running?},#{test_case_data[:action_type]},#{test_case_data[:action_url]}, #{timing_data[:tracing_time]},#{timing_data[:app_call_time]},#{timing_data[:reporting_time]},#{timing_data[:final_processing_time]}")
       NewRelic::Agent.notice_error(StandardError.new("Coverband Timing Data"), test_case_data: test_case_data, timing_data: timing_data)
 
     end
