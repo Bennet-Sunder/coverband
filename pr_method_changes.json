@@ -1,0 +1,46 @@
+{
+  "31475": {
+      "components/service_bot/spec/lib/service_bot/slack/notifications/dm/ticket_reply_spec.rb": {},
+      "components/service_bot/spec/lib/service_bot/experience_handler/slack/ticket_confirmation/group_scope_spec.rb": {},
+      "components/service_bot/lib/service_bot/notifications/common_notification_methods.rb": {
+          "added": [
+              "fallback_workspace_id"
+          ],
+          "deleted": [
+              "multi_slack_workspace_notifications"
+          ]
+      },
+      "components/service_bot/lib/service_bot/slack/notifications/dm/notifications_helper.rb": {
+          "added": [
+              "slack_thread_workspace_id",
+              "slack_thread",
+              "realm_workspace_id"
+          ]
+      },
+      "components/service_bot/spec/lib/service_bot/slack/notifications/dm/approval_notification_spec.rb": {},
+      "components/service_bot/lib/service_bot/slack/notifications/dm/ticket_status_change.rb": {},
+      "components/service_bot/spec/lib/service_bot/slack/notifications/dm/ticket_status_change_spec.rb": {},
+      "components/service_bot/lib/service_bot/slack/notifications/dm/approval_notification.rb": {
+          "added": [
+              "realm_workspace_id"
+          ],
+          "modified": [
+              "call"
+          ],
+          "deleted": [
+              "initialize"
+          ]
+      },
+      "components/service_bot/lib/service_bot/slack/notifications/dm/ticket_reply.rb": {
+          "modified": [
+              "send_attachment_notification"
+          ]
+      },
+      "components/service_bot/spec/lib/service_bot/notifications/common_notification_methods_spec.rb": {},
+      "components/service_bot/lib/service_bot/experience_handler/slack/ticket_confirmation/message_helper.rb": {
+          "modified": [
+              "save_slack_meta_info"
+          ]
+      }
+  }
+}

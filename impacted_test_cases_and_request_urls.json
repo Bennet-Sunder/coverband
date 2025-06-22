@@ -1,0 +1,92 @@
+{
+  "31475": {
+    "test_cases": {
+      "61656621": [
+        "POST::teeinfocity13142356.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61649901": [
+        "POST::qseinfocity13144532.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61627810": [
+        "POST::ncminfocity13144600.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61658074": [
+        "POST::pyoinfocity13144710.freshteamvermithor.com/api/v2/groups::202",
+        "DELETE::pyoinfocity13144710.freshteamvermithor.com/api/v2/groups/58306::202"
+      ],
+      "61649905": [
+        "POST::qseinfocity13144532.freshteamvermithor.com/api/v2/tickets/19/reply::201"
+      ],
+      "61650603": [
+        "PUT::yizinfocity13162701.freshteamvermithor.com/api/v2/agents/28958/convert_to_requester::Freshid::V2::ExtensionsUpdate"
+      ],
+      "61719232": [
+        "POST::fxpinfocity13142422.freshteamvermithor.com/api/_/tickets::201"
+      ],
+      "61636794": [
+        "DELETE::phvinfocity13153047.freshteamvermithor.com/api/v2/requesters/24484/forget::Itil::DeleteAliasesFid"
+      ],
+      "61654471": [
+        "POST::arfinfocity13144407.freshteamvermithor.com/api/v2/tickets/7/reply::201"
+      ],
+      "61701661": [
+        "POST::xlzinfocity13155146.freshteamvermithor.com/api/_/tickets::201"
+      ],
+      "61669781": [
+        "POST::yybinfocity13162818.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61642708": [
+        "POST::lgrinfocity13153126.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61649906": [
+        "POST::qseinfocity13144532.freshteamvermithor.com/api/v2/tickets/20/reply::201",
+        "PUT::qseinfocity13144532.freshteamvermithor.com/api/v2/tickets/20::200"
+      ],
+      "61644210": [
+        "DELETE::sbminfocity13144317.freshteamvermithor.com/api/v2/assets/407::FreshPipe"
+      ],
+      "61640183": [
+        "POST::xqcinfocity13152835.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61627809": [
+        "POST::ldlinfocity13144519.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61642706": [
+        "POST::opkinfocity13153113.freshteamvermithor.com/api/v2/tickets::201"
+      ],
+      "61639982": [
+        "POST::jlcinfocity13164116.freshteamvermithor.com/api/v2/tickets/5/notes::201",
+        "POST::tzlinfocity13164230.freshteamvermithor.com/api/v2/tickets/32/notes::201"
+      ],
+      "61651140": [
+        "DELETE::mydinfocity13164514.freshteamvermithor.com/api/v2/requesters/27626/forget::Workers::AddRequesterToGroups"
+      ],
+      "61625509": [
+        "PUT::yybinfocity13162818.freshteamvermithor.com/api/v2/agents/28318/convert_to_requester::Itil::AnalyticReports::UserDeletion"
+      ]
+    },
+    "test_case_count": 20,
+    "test_case_list": [
+      "61625509",
+      "61627809",
+      "61627810",
+      "61636794",
+      "61639982",
+      "61640183",
+      "61642706",
+      "61642708",
+      "61644210",
+      "61649901",
+      "61649905",
+      "61649906",
+      "61650603",
+      "61651140",
+      "61654471",
+      "61656621",
+      "61658074",
+      "61669781",
+      "61701661",
+      "61719232"
+    ]
+  }
+}

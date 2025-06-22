@@ -1,0 +1,13 @@
+1. blueprinter.rb files do not show up
+    agent = Agent.first
+    Account.first.make_current
+    User.first.make_current
+    before = ::Coverage.result(clear: true, stop: false)
+    AgentBlueprint.render(Agent.first, {view: :api_v2, root: :agents})
+    after = ::Coverage.result(clear: true, stop: false)
+    impacted_data = after.select do |file_name, file_mapping|
+        file_mapping[:methods].any? do |key, value|
+         value > 0
+        end
+    end
+    puts impacted_data.keys.count

@@ -1,0 +1,26 @@
+Coverage Comparison Report
+==========================
+File 1: /Users/bsunder/coverband/test/benchmarks/group_create1.json
+File 2: /Users/bsunder/coverband/test/benchmarks/group_create2.json
+
+Summary:
+--------
+Test IDs in File 1: 1
+Test IDs in File 2: 1
+Common Test IDs: 1
+Unique to File 1: 0
+Unique to File 2: 0
+
+[0;92;49mTest ID: 17034[0m
+  Requests in File 1: 2
+  Requests in File 2: 2
+  Common Requests: 2
+
+[0;95;49mStatistics:[0m
+------------
+Common files: 142
+Common methods: 516
+Files unique to File 1: 0
+Files unique to File 2: 0
+Methods unique to File 1: 0
+Methods unique to File 2: 0

@@ -1,0 +1,13 @@
+{
+  "modified_methods": {
+    "lib/audit_log/transformers/agent.rb": [
+      "AuditLog::Transformers::Agent#agent"
+    ]
+  },
+  "affected_test_cases": {},
+  "summary": {
+    "modified_method_count": 1,
+    "modified_file_count": 1,
+    "affected_test_case_count": 0
+  }
+}
