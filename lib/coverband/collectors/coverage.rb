@@ -59,6 +59,7 @@ module Coverband
           unless ENV['DISABLE_AUTO_START']
             final_processing_time = Benchmark.realtime do
               test_report = filtered_files(Delta.results) 
+              test_report = ::Coverage.result(clear: true, stop: false)
             end
           end
           @store.save_method_report(test_report, test_case_details)
@@ -134,13 +135,20 @@ module Coverband
           puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
         elsif ::Coverage.respond_to?(:state)
           if ::Coverage.state == :idle
-            puts("ENV['DISABLE_AUTO_START'] #{ENV["DISABLE_AUTO_START"]}")
-            ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
+            if Coverband.configuration.use_oneshot_lines_coverage
+              ::Coverage.start(oneshot_lines: true) unless ENV["DISABLE_AUTO_START"]
+            else
+              ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
+            end
           elsif ::Coverage.state == :suspended
             ::Coverage.resume
           end
         else
-          ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
+          if Coverband.configuration.use_oneshot_lines_coverage
+            ::Coverage.start(oneshot_lines: true) unless ENV["DISABLE_AUTO_START"]
+          else
+            ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
+          end
         end
         reset_instance
       end

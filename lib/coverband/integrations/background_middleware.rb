@@ -63,6 +63,7 @@ module Coverband
       final_processing_time = 0
       if test_case_data && !ENV['DISABLE_AUTO_START']
         reporting_time = Benchmark.realtime do
+          byebug
           final_processing_time = ::Coverband.report_new_coverage(test_case_data)
         end
         timing_data[:reporting_time] = reporting_time

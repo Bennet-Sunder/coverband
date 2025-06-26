@@ -29,6 +29,7 @@ module Coverband
 
       def results
         if Coverband.configuration.use_oneshot_lines_coverage
+          byebug
           transform_oneshot_lines_results(current_coverage)
         else
           new_results = generate

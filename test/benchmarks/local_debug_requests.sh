@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Number of parallel requests to make
-NUM_REQUESTS=10
+NUM_REQUESTS=5
 SUCCESSFUL_REQUESTS=0
 
 # Start time measurement
