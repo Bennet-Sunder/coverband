@@ -17,11 +17,10 @@ module Coverband
     end
 
     def call(env)
-      ::Coverage.result(clear: true, stop: false)
       original_test_case_id = env['HTTP_X_TEST_CASE_ID']
-      
       test_case_data = nil
       if original_test_case_id&.present?
+        Coverband.start_datadog_coverage
         Rails.logger.info("Coverband: Coverage reporting enabled for test case ID: #{original_test_case_id}")
         
         test_case_data = {

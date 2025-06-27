@@ -16,10 +16,12 @@ module Coverband
       def call(_worker, job, _queue)
         test_case_data = job['coverband_test_case_id']
         test_case_data['response_code'] = _worker.class
+        Coverband.start_datadog_coverage
         Rails.logger.info "Coverband: Starting coverage for test case ID #{test_case_data}"
         yield
       ensure
         if test_case_data
+          coverage_data = Coverband.stop_datadog_coverage
           ::Coverband.report_new_coverage(test_case_data)
         end
       end

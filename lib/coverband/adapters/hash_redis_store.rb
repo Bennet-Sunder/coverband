@@ -94,11 +94,6 @@ module Coverband
         action_type = test_case_details[:action_type]
         action_url = test_case_details[:action_url]
         response_code = test_case_details[:response_code]
-        
-        # Extract method coverage data from the report
-        method_trace = extract_method_coverage(report)
-        return if method_trace.empty?
-        
         # Create a request_id for HTTP requests or use worker_id for background jobs
         if test_case_details[:worker_class]
           # This is a worker
@@ -123,7 +118,7 @@ module Coverband
           return
         end
         # Prepare data
-        trace_json = method_trace.to_json
+        trace_json = report.to_json
         json_size_bytes = trace_json.bytesize.to_s
         
         # Use Lua script to ensure atomicity of core operations

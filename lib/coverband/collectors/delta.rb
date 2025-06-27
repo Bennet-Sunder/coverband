@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+require_relative 'datadog_coverage'
 
 module Coverband
   module Collectors
@@ -22,13 +23,22 @@ module Coverband
         end
       end
 
-      def self.results(process_coverage = RubyCoverage)
+      def self.results(process_coverage = nil)
+        # Use Datadog coverage if configured, otherwise use Ruby's Coverage
+        process_coverage = if Coverband.configuration.use_datadog_coverage
+          DatadogCoverageAdapter
+        else
+          RubyCoverage
+        end
+        
         coverage_results = process_coverage.results
         new(coverage_results).results
       end
 
       def results
-        if Coverband.configuration.use_oneshot_lines_coverage
+        if Coverband.configuration.use_datadog_coverage
+          process_datadog_coverage(current_coverage)
+        elsif Coverband.configuration.use_oneshot_lines_coverage
           transform_oneshot_lines_results(current_coverage)
         else
           new_results = generate
@@ -44,6 +54,10 @@ module Coverband
       end
 
       private
+
+      def process_datadog_coverage(coverage_data)
+        coverage_data.select { |key, value| value }
+      end
 
       def generate
         current_coverage.each_with_object({}) do |(file, current_file_coverage_data), new_results|

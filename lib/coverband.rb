@@ -21,6 +21,7 @@ require "coverband/collectors/view_tracker"
 require "coverband/collectors/view_tracker_service"
 require "coverband/collectors/route_tracker"
 require "coverband/collectors/translation_tracker"
+require "coverband/collectors/datadog_coverage"
 require "coverband/reporters/base"
 require "coverband/reporters/console_report"
 require "coverband/integrations/background"
@@ -102,6 +103,29 @@ module Coverband
 
   def self.runtime_coverage!
     coverage_instance.runtime!
+  end
+
+  # Start Datadog coverage collection (for request-level tracing)
+  def self.start_datadog_coverage
+    return false unless configuration.use_datadog_coverage
+    
+    require "coverband/collectors/datadog_coverage"
+    Coverband::Collectors::DatadogCoverage.instance.start
+    true
+  rescue => e
+    configuration.logger.error "Coverband: Failed to start Datadog coverage: #{e.message}"
+    false
+  end
+
+  # Stop Datadog coverage collection and return coverage data
+  def self.stop_datadog_coverage
+    return {} unless configuration.use_datadog_coverage
+    
+    require "coverband/collectors/datadog_coverage"
+    Coverband::Collectors::DatadogCoverage.instance.stop
+  rescue => e
+    configuration.logger.error "Coverband: Failed to stop Datadog coverage: #{e.message}"
+    {}
   end
 
   # Track a key with the specified tracker.
