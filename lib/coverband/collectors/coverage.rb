@@ -54,7 +54,7 @@ module Coverband
         Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
-          @store.save_method_report(Delta.results, test_case_details)
+          @store.save_report(Delta.results, test_case_details)
         end
       rescue => e
         Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
