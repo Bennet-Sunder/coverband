@@ -5,54 +5,46 @@ require_relative '../adapters/base'
 module Coverband
   module Storage
     ##
-    # MySQL JSON storage adapter that integrates with Coverband's existing architecture
-    # This adapter converts between Coverband's expected format and your JSON storage needs
+    # MySQL JSON storage adapter using ActiveRecord's connection
+    # This adapter integrates with Coverband's existing architecture
     ##
     class MysqlJsonStore < Coverband::Adapters::Base
-      attr_reader :mysql_client
       
-      def initialize(mysql_config = {})
+      def initialize(_mysql_config = {})
         super() # Call parent constructor
-        require 'mysql2'
-        
-        @mysql_client = Mysql2::Client.new(
-          host: mysql_config[:host] || 'localhost',
-          username: mysql_config[:username] || 'root',
-          password: mysql_config[:password] || nil,  # No password for local root
-          database: mysql_config[:database] || 'itildesk1',
-          port: mysql_config[:port] || 3306
-        )
       end
       
-      ##
-      # Coverband compatibility methods - these are required by the base adapter
-      ##
+      def connection
+        ActiveRecord::Base.connection
+      end
       
+
       def clear!
-        @mysql_client.query("TRUNCATE TABLE test_coverage")
+        connection.execute("TRUNCATE TABLE test_coverage")
       end
       
       def clear_file!(filename)
         # Remove all records containing this file path
-        sql = "DELETE FROM test_coverage WHERE JSON_CONTAINS_PATH(file_paths, 'one', ?)"
-        stmt = @mysql_client.prepare(sql)
-        stmt.execute("$.\"#{escape_json_key(filename)}\"")
+        json_path = "$.\"#{filename.gsub('"', '\\"')}\""
+        sql = "DELETE FROM test_coverage WHERE JSON_CONTAINS_PATH(file_paths, 'one', '#{json_path}')"
+        connection.execute(sql)
       end
       
       def size
-        result = @mysql_client.query("SELECT COUNT(*) as count FROM test_coverage")
-        result.first['count']
+        result = connection.execute("SELECT COUNT(*) as count FROM test_coverage")
+        result.first[0] # First row, first column
       end
       
       def coverage(_local_type = nil, opts = {})
         # Convert from your format to Coverband's expected format
-        # This is a simplified conversion - you may need to enhance based on usage
         sql = "SELECT test_case_id, request_details, file_paths FROM test_coverage"
-        results = @mysql_client.query(sql)
+        results = connection.execute(sql)
         
         coverage_data = {}
         results.each do |row|
-          files = JSON.parse(row['file_paths'])
+          # ActiveRecord returns arrays, so access by index
+          test_case_id, request_details, file_paths_json = row
+          files = JSON.parse(file_paths_json)
           files.each_key do |file_path|
             coverage_data[file_path] = {
               "data" => [1], # Simplified - you'd need real coverage data
@@ -81,78 +73,72 @@ module Coverband
       
       
       ##
-      # Your original methods for JSON-based queries
+      # Core storage methods using ActiveRecord connection
       ##
       
       def store_coverage(test_case_id, request_details, file_paths)
+        file_paths_json = file_paths.to_json
+        
+        # Use connection.execute with proper escaping like other methods in this class
+        escaped_test_case_id = connection.quote(test_case_id)
+        escaped_request_details = connection.quote(request_details)
+        escaped_file_paths_json = connection.quote(file_paths_json)
+        
         sql = <<~SQL
-          INSERT INTO test_coverage (test_case_id, request_details, file_paths)
-          VALUES (?, ?, ?)
+          INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at)
+          VALUES (#{escaped_test_case_id}, #{escaped_request_details}, #{escaped_file_paths_json}, NOW(), NOW())
           ON DUPLICATE KEY UPDATE 
             file_paths = VALUES(file_paths),
-            updated_at = CURRENT_TIMESTAMP
+            updated_at = NOW()
         SQL
         
-        @mysql_client.prepare(sql).execute(
-          test_case_id, 
-          request_details, 
-          file_paths.to_json
-        )
-      end
-      
-      def batch_store_coverage(coverage_data)
-        return 0 unless coverage_data.is_a?(Hash)
-        
-        count = 0
-        coverage_data.each do |test_case_id, requests|
-          next unless requests.is_a?(Hash)
-          
-          requests.each do |request_details, files|
-            next unless files.is_a?(Hash)
-            
-            store_coverage(test_case_id, request_details, files)
-            count += 1
-          end
-        end
-        count
+        connection.execute(sql)
+      rescue ActiveRecord::StatementInvalid => e
+        Rails.logger.error("Coverband MySQL: Error storing coverage: #{e.message}")
+        raise e
       end
       
       def find_test_cases_by_file(file_path)
+        json_path = "$.\"#{file_path.gsub('"', '\\"')}\""
         sql = <<~SQL
           SELECT DISTINCT test_case_id 
           FROM test_coverage 
-          WHERE JSON_CONTAINS_PATH(file_paths, 'one', ?)
+          WHERE JSON_CONTAINS_PATH(file_paths, 'one', '#{json_path}')
         SQL
         
-        stmt = @mysql_client.prepare(sql)
-        results = stmt.execute("$.\"#{escape_json_key(file_path)}\"")
-        results.map { |row| row['test_case_id'] }
+        results = connection.execute(sql)
+        results.map { |row| row[0] } # Extract first column from each row
       end
       
       def find_requests_by_file(file_path)
+        json_path = "$.\"#{file_path.gsub('"', '\\"')}\""
         sql = <<~SQL
           SELECT DISTINCT request_details 
           FROM test_coverage 
-          WHERE JSON_CONTAINS_PATH(file_paths, 'one', ?)
+          WHERE JSON_CONTAINS_PATH(file_paths, 'one', '#{json_path}')
         SQL
         
-        stmt = @mysql_client.prepare(sql)
-        results = stmt.execute("$.\"#{escape_json_key(file_path)}\"")
-        results.map { |row| row['request_details'] }
+        results = connection.execute(sql)
+        results.map { |row| row[0] } # Extract first column from each row
       end
       
       def find_files_by_test_and_request(test_case_id, request_details)
+        # Use string interpolation with proper escaping for active_record_shards compatibility
+        escaped_test_case_id = connection.quote(test_case_id)
+        escaped_request_details = connection.quote(request_details)
+        
         sql = <<~SQL
           SELECT JSON_KEYS(file_paths) as files
           FROM test_coverage 
-          WHERE test_case_id = ? AND request_details = ?
+          WHERE test_case_id = #{escaped_test_case_id} AND request_details = #{escaped_request_details}
         SQL
         
-        stmt = @mysql_client.prepare(sql)
-        result = stmt.execute(test_case_id, request_details).first
+        result = connection.execute(sql).first
+        return [] unless result && result[0]
         
-        return [] unless result && result['files']
-        JSON.parse(result['files'])
+        JSON.parse(result[0])
+      rescue JSON::ParserError
+        []
       end
       
       def get_stats
@@ -164,51 +150,17 @@ module Coverband
           FROM test_coverage
         SQL
         
-        @mysql_client.query(sql).first
+        result = connection.execute(sql).first
+        {
+          test_cases: result[0],
+          requests: result[1], 
+          total_records: result[2]
+        }
       end
       
-      def close
-        @mysql_client&.close
-      end
       
       private
-      
-      def escape_json_key(key)
-        key.gsub('\\', '\\\\').gsub('"', '\\"')
-      end
-      
-      def extract_test_case_id
-        # Extract from thread-local storage, request context, etc.
-        Thread.current[:coverband_test_case_id] ||
-        ENV['COVERBAND_TEST_CASE_ID'] ||
-        "test_#{Time.now.to_i}"
-      end
-      
-      def extract_request_details
-        # Extract from Rack env, Rails request, etc.
-        if defined?(Rails) && Rails.application
-          request = Thread.current[:current_request]
-          if request
-            "#{request.method}::#{request.path}::#{request.status || 'unknown'}"
-          else
-            "background_job::#{Time.now.to_i}"
-          end
-        else
-          "request_#{Time.now.to_i}"
-        end
-      end
-      
-      def generate_request_details_from_data(data)
-        # Generate request details string from test case data from BackgroundMiddleware
-        return "unknown_request" unless data && data.is_a?(Hash)
-        
-        action_type = data[:action_type] || data['action_type'] || 'UNKNOWN'
-        action_url = data[:action_url] || data['action_url'] || 'unknown-url'
-        response_code = data[:response_code] || data['response_code'] || 'unknown'
-        
-        # Create a detailed request string (up to 2000 chars)
-        "#{action_type}::#{action_url}::#{response_code}::#{Time.now.to_i}"
-      end
+
     end
   end
 end
