@@ -59,7 +59,7 @@ module Coverband
       def save_report(coverage_map, test_case_details = {})
         # Convert Coverband's report format to your storage format
         # This is where you'd extract test case and request info from the context
-        
+        test_case_details.symbolize_keys! if test_case_details.is_a?(Hash)
         # Extract test case information
         test_id = test_case_details[:test_id]
         action_type = test_case_details[:action_type]

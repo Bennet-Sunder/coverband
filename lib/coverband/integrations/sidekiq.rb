@@ -21,8 +21,11 @@ module Coverband
         yield
       ensure
         if test_case_data
-          coverage_data = Coverband.stop_datadog_coverage
-          ::Coverband.report_new_coverage(test_case_data)
+          begin
+            ::Coverband.report_new_coverage(test_case_data)
+          rescue => e
+            NewRelic::Agent.notice_error(e, { error: "Coverband storage failed for #{test_case_data.to_json}" })
+          end
         end
       end
     end

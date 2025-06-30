@@ -21,8 +21,7 @@ module Coverband
       test_case_data = nil
       if original_test_case_id&.present?
         Coverband.start_datadog_coverage
-        Rails.logger.info("Coverband: Coverage reporting enabled for test case ID: #{original_test_case_id}")
-        
+        NewRelic::Agent.notice_error(e, { error: "Coverband coverage started for #{original_test_case_id}" })
         test_case_data = {
           test_id: original_test_case_id,
           action_type: env['REQUEST_METHOD'],
@@ -47,7 +46,11 @@ module Coverband
       [status, headers, response]
     ensure
       if test_case_data
-        ::Coverband.report_new_coverage(test_case_data)
+        begin
+          ::Coverband.report_new_coverage(test_case_data)
+        rescue => e
+          NewRelic::Agent.notice_error(e, { error: "Coverband storage failed for #{test_case_data.to_json}" })
+        end        
       end
       Thread.current[:coverband_test_case_id] = nil
     end
