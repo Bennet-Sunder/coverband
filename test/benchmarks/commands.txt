@@ -1,0 +1,1 @@
+Coverband.configuration.store.find_requests_by_file '/Users/bsunder/itildesk/lib/workspace/non_archived_scope.rb'
