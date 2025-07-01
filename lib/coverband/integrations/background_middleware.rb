@@ -21,7 +21,6 @@ module Coverband
       test_case_data = nil
       if original_test_case_id&.present?
         Coverband.start_datadog_coverage
-        NewRelic::Agent.notice_error(e, { error: "Coverband coverage started for #{original_test_case_id}" })
         test_case_data = {
           test_id: original_test_case_id,
           action_type: env['REQUEST_METHOD'],
