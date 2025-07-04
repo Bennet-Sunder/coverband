@@ -20,7 +20,9 @@ module Coverband
       original_test_case_id = env['HTTP_X_TEST_CASE_ID']
       test_case_data = nil
       if original_test_case_id&.present?
-        Coverband.start_datadog_coverage
+        # Coverband.start_datadog_coverage
+        coverage_instance = Coverband::Collectors::DatadogCoverage.initialize_multi_threaded_coverage
+        coverage_instance.start
         test_case_data = {
           test_id: original_test_case_id,
           action_type: env['REQUEST_METHOD'],
@@ -46,7 +48,8 @@ module Coverband
     ensure
       if test_case_data
         begin
-          ::Coverband.report_new_coverage(test_case_data)
+          coverage_results = coverage_instance.stop
+          Coverband::Collectors::Coverage.save_multithreaded_coverage(test_case_data, coverage_results)
         rescue => e
           NewRelic::Agent.notice_error(e, { error: "Coverband storage failed for #{test_case_data.to_json}" })
         end        

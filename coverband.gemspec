@@ -63,4 +63,8 @@ Gem::Specification.new do |spec|
   # without this there was a race condition on calling coverband configure before redis was loaded
   spec.add_runtime_dependency "redis", ">= 3.0"
   spec.add_runtime_dependency "base64"
+  spec.add_dependency 'connection_pool', '~> 2.2'
+  spec.add_dependency 'mysql2', '~> 0.5.6'
+
+
 end

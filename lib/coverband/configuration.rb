@@ -330,6 +330,18 @@ module Coverband
       puts "gem tracking is deprecated, setting this will be ignored & eventually removed"
     end
 
+    def datadog_coverage_instance
+      @datadog_coverage_instance ||= begin
+        return nil unless use_datadog_coverage
+        
+        require "coverband/collectors/datadog_coverage"
+        Coverband::Collectors::DatadogCoverage.new
+      rescue LoadError => e
+        logger.error("Coverband: Failed to create Datadog coverage instance: #{e.message}")
+        nil
+      end
+    end
+
     private
 
     def redis_store_options

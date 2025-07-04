@@ -51,22 +51,39 @@ module Coverband
       end
 
       def report_new_coverage(test_case_details = {})
-        Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
+        puts("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
           @store.save_report(Delta.results, test_case_details)
         end
       rescue => e
-        Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
+        puts("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
         @logger&.error "coverage failed to store"
         @logger&.error "Coverband Error: #{e.inspect} #{e.message}"
         e.backtrace.each { |line| @logger&.error line } if @verbose
         raise e if @test_env      
       end
 
+      def self.save_multithreaded_coverage(test_case_details = {}, coverage_results = nil)
+        Coverband.configuration.store.save_report(coverage_results, test_case_details)
+      rescue => e
+        puts("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
+      end      
+
+
+
+      def self.save_sidekiq_coverage(test_case_details)
+        begin
+          coverage_results = Coverband::Collectors::DatadogCoverage.stop_single_threaded_coverage
+          Coverband.configuration.store.save_report(coverage_results, test_case_details)
+        rescue => e
+          puts "FAILED: Storing sidekiq coverage for test case: #{test_case_details.inspect} with error: #{e.message}"
+        end
+      end
+
       def report_coverage(test_case_id = nil)
         return
-        Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_id}")
+        puts("Coverband: report_coverage test case ID: #{test_case_id}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
           files_with_line_usage = filtered_files(Delta.results)
@@ -79,12 +96,12 @@ module Coverband
                 @deferred_eager_loading_data = nil
               end
             end
-            Rails.logger.info("Coverband: save_report test case ID: #{test_case_id}")
+            puts("Coverband: save_report test case ID: #{test_case_id}")
             @store.save_report(files_with_line_usage, test_case_id)
           end
         end
       rescue => e
-        Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_id}")
+        puts("Coverband: Coverage storage failed for test case ID: #{test_case_id}")
         @logger&.error "coverage failed to store"
         @logger&.error "Coverband Error: #{e.inspect} #{e.message}"
         e.backtrace.each { |line| @logger&.error line } if @verbose
@@ -117,33 +134,41 @@ module Coverband
         @semaphore = Mutex.new
 
         if Coverband.configuration.use_datadog_coverage
-          # Initialize Datadog coverage
-          require_relative 'datadog_coverage'
-          @datadog_coverage = DatadogCoverage.instance
-          @datadog_coverage.start
-          Coverband.configuration.logger.info("Coverband: Using Datadog coverage collection") if Coverband.configuration.verbose
-        else
-          # Initialize Ruby's built-in Coverage
-          require "coverage"
-          if RUBY_PLATFORM == "java"
-            unless ::Coverage.respond_to?(:line_stub)
-              require "coverband/utils/jruby_ext"
-            end
-          end
-          if defined?(SimpleCov) && defined?(Rails) && defined?(Rails.env) && Rails.env.test?
-            puts "Coverband: detected SimpleCov in test Env, allowing it to start Coverage"
-            puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
-          elsif ::Coverage.respond_to?(:state)
-            if ::Coverage.state == :idle
-              ::Coverage.start(lines: true, methods: true)
-            elsif ::Coverage.state == :suspended
-              ::Coverage.resume
-            end
+          # Initialize Datadog coverage using configuration instance
+          @datadog_coverage = Coverband.configuration.datadog_coverage_instance
+          if @datadog_coverage
+            @datadog_coverage.start
+            Coverband.configuration.logger.info("Coverband: Using Datadog coverage collection") if Coverband.configuration.verbose
           else
-            ::Coverage.start(lines: true, methods: true) unless ::Coverage.running?
+            Coverband.configuration.logger.warn("Coverband: Failed to initialize Datadog coverage, falling back to Ruby Coverage")
+            initialize_ruby_coverage
           end
+        else
+          initialize_ruby_coverage
         end
         reset_instance
+      end
+
+      def initialize_ruby_coverage
+        # Initialize Ruby's built-in Coverage
+        require "coverage"
+        if RUBY_PLATFORM == "java"
+          unless ::Coverage.respond_to?(:line_stub)
+            require "coverband/utils/jruby_ext"
+          end
+        end
+        if defined?(SimpleCov) && defined?(Rails) && defined?(Rails.env) && Rails.env.test?
+          puts "Coverband: detected SimpleCov in test Env, allowing it to start Coverage"
+          puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
+        elsif ::Coverage.respond_to?(:state)
+          if ::Coverage.state == :idle
+            ::Coverage.start(lines: true, methods: true)
+          elsif ::Coverage.state == :suspended
+            ::Coverage.resume
+          end
+        else
+          ::Coverage.start(lines: true, methods: true) unless ::Coverage.running?
+        end
       end
     end
   end

@@ -110,8 +110,11 @@ module Coverband
   def self.start_datadog_coverage
     return false unless configuration.use_datadog_coverage
     
-    require "coverband/collectors/datadog_coverage"
-    Coverband::Collectors::DatadogCoverage.instance.start
+    instance = configuration.datadog_coverage_instance
+    return false unless instance
+    
+    puts "Coverband: #{::Thread.current.object_id} start_datadog_coverage"
+    instance.start
     true
   rescue => e
     configuration.logger.error "Coverband: Failed to start Datadog coverage: #{e.message}"
@@ -120,10 +123,13 @@ module Coverband
 
   # Stop Datadog coverage collection and return coverage data
   def self.stop_datadog_coverage
+    puts "Coverband: #{::Thread.current.object_id} stop_datadog_coverage"
     return {} unless configuration.use_datadog_coverage
     
-    require "coverband/collectors/datadog_coverage"
-    Coverband::Collectors::DatadogCoverage.instance.stop
+    instance = configuration.datadog_coverage_instance
+    return {} unless instance
+    
+    instance.stop
   rescue => e
     configuration.logger.error "Coverband: Failed to stop Datadog coverage: #{e.message}"
     {}

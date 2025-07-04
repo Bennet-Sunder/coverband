@@ -1,15 +1,11 @@
 # frozen_string_literal: true
 
-require 'singleton'
-
 module Coverband
   module Collectors
     ###
     # DatadogCoverage: Adapter for using Datadog's DDCov instead of Ruby's Coverage module
     ###
     class DatadogCoverage
-      include Singleton
-
       def initialize
         @dd_cov = nil
         @coverage_started = false
@@ -26,7 +22,7 @@ module Coverband
           
           dd_cov.start
           @coverage_started = true
-          Coverband.configuration.logger.info("Coverband: Started Datadog coverage collection") if Coverband.configuration.verbose
+          puts("Coverband: Started Datadog coverage collection") if Coverband.configuration.verbose
         end
       end
 
@@ -36,38 +32,69 @@ module Coverband
           
           coverage_data = dd_cov.stop
           @coverage_started = false
+          puts("Coverband: Stopped Datadog coverage collection") if Coverband.configuration.verbose
           
-          # Convert Datadog format to Coverband format if needed
           convert_datadog_format(coverage_data)
         end
       end
 
       def peek_result
-        @mutex.synchronize do
-          return {} unless @coverage_started
-          
-          # Datadog doesn't have peek_result, so we need to stop and restart
-          coverage_data = dd_cov.stop
-          dd_cov.start
-          
-          convert_datadog_format(coverage_data)
-        end
+        # Simple delegation to stop for compatibility
+        stop
       end
 
       def running?
-        @coverage_started
+        @mutex.synchronize { @coverage_started }
       end
+
+      def self.single_threaded_coverage_collector
+        Thread.current[:dd_coverage_collector] ||= Datadog::CI::TestOptimisation::Coverage::DDCov.new(
+          root: Dir.pwd,
+          ignored_path: nil,
+          threading_mode: :single,
+          use_allocation_tracing: false
+        )
+      end
+
+      def self.start_single_threaded_coverage
+        single_threaded_coverage_collector.start
+      end
+
+      def self.stop_single_threaded_coverage
+        coverage_data = single_threaded_coverage_collector.stop
+        coverage_data
+      end
+
+      def self.initialize_multi_threaded_coverage
+        Datadog::CI::TestOptimisation::Coverage::DDCov.new(
+          root: Dir.pwd,
+          ignored_path: nil,
+          threading_mode: :multi,
+          use_allocation_tracing: true
+        )
+      end
+
+      def self.stop_multi_threaded_coverage()
+        Datadog::CI::TestOptimisation::Coverage::DDCov.new(
+          root: Dir.pwd,
+          ignored_path: nil,
+          threading_mode: :multi,
+          use_allocation_tracing: true
+        )
+      end      
+
 
       private
 
       def create_dd_cov_instance
         require 'datadog/ci'
         
+        # Use multi-threading mode to capture coverage from all threads
         Datadog::CI::TestOptimisation::Coverage::DDCov.new(
           root: Dir.pwd,
           ignored_path: nil,
-          threading_mode: :multi,
-          use_allocation_tracing: true
+          threading_mode: :single,
+          use_allocation_tracing: false
         )
       rescue LoadError => e
         Coverband.configuration.logger.error("Coverband: Failed to load datadog-ci gem: #{e.message}")
@@ -76,11 +103,9 @@ module Coverband
 
       def convert_datadog_format(datadog_coverage)
         # Convert Datadog's coverage format to match Ruby's Coverage format
-        # This may need adjustment based on actual Datadog coverage format
         return {} if datadog_coverage.nil? || datadog_coverage.empty?
         
         # Assuming Datadog returns coverage in a similar format
-        # You may need to adjust this based on the actual format
         datadog_coverage
       end
     end
