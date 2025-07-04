@@ -16,9 +16,11 @@ module Coverband
     class SidekiqServerMiddleware
       def call(_worker, job, _queue)
         test_case_data = job['coverband_test_case_id']
-        test_case_data['response_code'] = _worker.class if test_case_data.key?('response_code')
-        Coverband::Collectors::DatadogCoverage.start_single_threaded_coverage
-        puts ("#{::Thread.current.object_id} Coverband: Starting SidekiqServerMiddleware for job: #{job.inspect}")
+        if test_case_data
+          test_case_data['response_code'] = _worker&.class if test_case_data&.key?('response_code')
+          Coverband::Collectors::DatadogCoverage.start_single_threaded_coverage
+          puts ("#{::Thread.current.object_id} Coverband: Starting SidekiqServerMiddleware for job: #{job.inspect}")
+        end
         yield
       ensure
         puts ("#{::Thread.current.object_id} Coverband: Starting SidekiqServerMiddleware ENSURE for job: #{job.inspect}")
