@@ -17,8 +17,12 @@ module Coverband
     end
 
     def call(env)
-      original_test_case_id = env['HTTP_X_TEST_CASE_ID']
       test_case_data = nil
+      original_test_case_id = if BaseRedis.key_exists?(Redis::RedisKeys::COVERBAND_ALL_REQUESTS)
+        SecureRandom.random_number(Redis::RedisKeys::COVERBAND_TEST_CASE_RANGE)
+      else
+        env['HTTP_X_TEST_CASE_ID']
+      end
       if original_test_case_id&.present?
         # Coverband.start_datadog_coverage
         coverage_instance = Coverband::Collectors::DatadogCoverage.initialize_multi_threaded_coverage
