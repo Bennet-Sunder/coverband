@@ -6,6 +6,7 @@ module Coverband
     # DatadogCoverage: Adapter for using Datadog's DDCov instead of Ruby's Coverage module
     ###
     class DatadogCoverage
+      IGNORED_PATH = Dir.pwd + '/config/helpdesk'
       def initialize
         @dd_cov = nil
         @coverage_started = false
@@ -50,7 +51,7 @@ module Coverband
       def self.single_threaded_coverage_collector
         Thread.current[:dd_coverage_collector] ||= Datadog::CI::TestOptimisation::Coverage::DDCov.new(
           root: Dir.pwd,
-          ignored_path: nil,
+          ignored_path: IGNORED_PATH,
           threading_mode: :single,
           use_allocation_tracing: false
         )
@@ -68,7 +69,7 @@ module Coverband
       def self.initialize_multi_threaded_coverage
         Datadog::CI::TestOptimisation::Coverage::DDCov.new(
           root: Dir.pwd,
-          ignored_path: nil,
+          ignored_path: IGNORED_PATH,
           threading_mode: :multi,
           use_allocation_tracing: true
         )
@@ -77,7 +78,7 @@ module Coverband
       def self.stop_multi_threaded_coverage()
         Datadog::CI::TestOptimisation::Coverage::DDCov.new(
           root: Dir.pwd,
-          ignored_path: nil,
+          ignored_path: IGNORED_PATH,
           threading_mode: :multi,
           use_allocation_tracing: true
         )
@@ -92,7 +93,7 @@ module Coverband
         # Use multi-threading mode to capture coverage from all threads
         Datadog::CI::TestOptimisation::Coverage::DDCov.new(
           root: Dir.pwd,
-          ignored_path: nil,
+          ignored_path: IGNORED_PATH,
           threading_mode: :single,
           use_allocation_tracing: false
         )

@@ -11,6 +11,8 @@ module Coverband
     # This adapter provides database independence from ActiveRecord
     ##
     class MysqlJsonStore < Coverband::Adapters::Base
+
+      PWD_DIR = Dir.pwd
       
       def initialize(mysql_config = {})
         super() # Call parent constructor
@@ -84,18 +86,8 @@ module Coverband
       end
       
       def save_report(coverage_map, test_case_details = {})
-        # Convert Coverband's report format to your storage format
-        # This is where you'd extract test case and request info from the context
-        test_case_details.symbolize_keys! if test_case_details.is_a?(Hash)
-        # Extract test case information
-        test_id = test_case_details[:test_id]
-        action_type = test_case_details[:action_type]
-        action_url = test_case_details[:action_url]
-        response_code = test_case_details[:response_code]
-
-        request_details = "#{action_type || 'UNKNOWN'}::#{action_url || 'UNKNOWN'}::#{response_code || 'UNKNOWN'}"
-        
-        store_coverage(test_id, request_details, coverage_map)
+        coverage_map.transform_keys! { |file| file.to_s.gsub(PWD_DIR, '') }
+        store_coverage(test_case_details, coverage_map)
       end
       
       
@@ -103,13 +95,15 @@ module Coverband
       # Core storage methods using mysql2 with connection pooling
       ##
       
-      def store_coverage(test_case_id, request_details, file_paths)
+      def store_coverage(test_case_details, file_paths)
         connection do |client|
           file_paths_json = file_paths.to_json
+          test_case_details_json = test_case_details.to_json
           
           # Use mysql2's escape method for proper escaping
+          test_case_id = test_case_details[:test_id] || test_case_details['test_id']
           escaped_test_case_id = client.escape(test_case_id.to_s)
-          escaped_request_details = client.escape(request_details.to_s)
+          escaped_request_details = client.escape(test_case_details_json)
           escaped_file_paths_json = client.escape(file_paths_json)
           
           sql = <<~SQL
