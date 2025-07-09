@@ -5,6 +5,7 @@ module Coverband
     class SidekiqClientMiddleware
       def call(_worker_class, job, _queue, _redis_pool)
         if Thread.current[:coverband_test_case_id]
+          Thread.current[:coverband_test_case_id]['worker_name'] = _worker_class
           job['coverband_test_case_id'] = Thread.current[:coverband_test_case_id]
         end
         yield
@@ -16,7 +17,6 @@ module Coverband
         test_case_data = job['coverband_test_case_id']
         if test_case_data
           Thread.current[:coverband_test_case_id] = test_case_data
-          test_case_data['response_code'] = _worker&.class if test_case_data&.key?('response_code')
           Coverband::Collectors::DatadogCoverage.start_single_threaded_coverage
         end
         yield
