@@ -15,7 +15,6 @@ module Coverband
     def initialize(app)
       @app = app
     end
-
     def call(env)
       test_case_data = nil
       original_test_case_id = if BaseRedis.key_exists?(Redis::RedisKeys::COVERBAND_ALL_REQUESTS)
@@ -31,9 +30,9 @@ module Coverband
           test_id: original_test_case_id,
           action_type: env['REQUEST_METHOD'],
           action_url: "#{env['HTTP_HOST']}#{env['PATH_INFO']}",
-          response_code: nil
+          response_code: nil,
+          request_id: env['action_dispatch.request_id']
         }
-        
         # storage_data = compress_keys(test_case_data)
         Thread.current[:coverband_test_case_id] = test_case_data
         Rails.logger.info("Coverband: Initial test case data: #{Thread.current[:coverband_test_case_id]}")

@@ -4,9 +4,14 @@ module Coverband
   module Integrations
     class SidekiqClientMiddleware
       def call(_worker_class, job, _queue, _redis_pool)
+        Rails.logger.info("Coverband: Sidekiq Client Middleware called for job: #{Thread.current[:coverband_test_case_id].inspect}")
         if Thread.current[:coverband_test_case_id]
-          Thread.current[:coverband_test_case_id]['worker_name'] = _worker_class
-          job['coverband_test_case_id'] = Thread.current[:coverband_test_case_id]
+          job['coverband_test_case_id'] = {
+            test_id: Thread.current[:coverband_test_case_id][:test_id],
+            request_id: Thread.current[:message_uuid],
+            worker_name: _worker_class,
+            jid: job['jid']
+          }
         end
         yield
       end
