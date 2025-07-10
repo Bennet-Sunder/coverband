@@ -12,12 +12,12 @@ module Coverband
     ##
     class MysqlJsonStore < Coverband::Adapters::Base
 
-      PWD_DIR = Dir.pwd
+      PWD_DIR = Dir.pwd + '/'
       
       def initialize(mysql_config = {})
         super() # Call parent constructor
         
-        # Default MySQL configuration
+        # Default MySQL configuration with minimal timeout fixes
         config = {
           host: mysql_config[:host] || 'localhost',
           port: mysql_config[:port] || 3306,
@@ -25,14 +25,14 @@ module Coverband
           password: mysql_config[:password],
           database: mysql_config[:database] || 'coverband',
           reconnect: true,
-          connect_timeout: 5,
-          read_timeout: 30,
-          write_timeout: 30
+          connect_timeout: mysql_config[:connect_timeout] || 10,
+          read_timeout: mysql_config[:read_timeout] || 60,
+          write_timeout: mysql_config[:write_timeout] || 60
         }.merge(mysql_config)
         
         # Create connection pool
-        pool_size = mysql_config[:pool_size] || 5
-        pool_timeout = mysql_config[:pool_timeout] || 5
+        pool_size = mysql_config[:pool_size] || 10
+        pool_timeout = mysql_config[:pool_timeout] || 10
         
         @pool = ConnectionPool.new(size: pool_size, timeout: pool_timeout) do
           Mysql2::Client.new(config)
@@ -40,7 +40,14 @@ module Coverband
       end
       
       def connection
-        @pool.with { |conn| yield(conn) }
+        @pool.with do |conn|
+          # Simple ping check before use
+          conn.ping
+          yield(conn)
+        end
+      rescue Mysql2::Error => e
+        Rails.logger&.error("Coverband MySQL: #{e.message}")
+        raise
       end
 
       def clear!
@@ -96,12 +103,17 @@ module Coverband
       ##
       
       def store_coverage(test_case_details, file_paths)
+        return false if file_paths.nil? || file_paths.empty?
+        
         connection do |client|
           file_paths_json = file_paths.to_json
           test_case_details_json = test_case_details.to_json
-          
           # Use mysql2's escape method for proper escaping
           test_case_id = test_case_details[:test_id] || test_case_details['test_id']
+          
+          # Validate test_case_id exists
+          return false unless test_case_id
+          
           escaped_test_case_id = client.escape(test_case_id.to_s)
           escaped_request_details = client.escape(test_case_details_json)
           escaped_file_paths_json = client.escape(file_paths_json)
@@ -115,12 +127,23 @@ module Coverband
           SQL
           
           client.query(sql)
+          true
         end
       rescue Mysql2::Error => e
-        Rails.logger.error("Coverband MySQL: Error storing coverage: #{e.message}")
+        if defined?(Rails) && Rails.logger
+          Rails.logger.error("Coverband MySQL: Error storing coverage: #{e.message}")
+          Rails.logger.error("Coverband MySQL: Backtrace: #{e.backtrace.join("\n")}")
+        else
+          puts "Coverband MySQL: Error storing coverage: #{e.message}"
+        end
         false # Don't raise - coverage errors shouldn't break your app
       rescue => e
-        Rails.logger.error("Coverband MySQL: Unexpected error storing coverage: #{e.message}")
+        if defined?(Rails) && Rails.logger
+          Rails.logger.error("Coverband MySQL: Unexpected error storing coverage: #{e.message}")
+          Rails.logger.error("Coverband MySQL: Backtrace: #{e.backtrace.join("\n")}")
+        else
+          puts "Coverband MySQL: Unexpected error storing coverage: #{e.message}"
+        end
         false
       end
       
@@ -195,6 +218,21 @@ module Coverband
       
       private
 
+      def should_retry?(error)
+        # Retry on connection-related errors
+        case error.message
+        when /Lost connection to MySQL server/,
+             /MySQL server has gone away/,
+             /Can't connect to MySQL server/,
+             /Connection refused/,
+             /Timeout/,
+             /broken pipe/i,
+             /connection reset/i
+          true
+        else
+          false
+        end
+      end
     end
   end
 end
