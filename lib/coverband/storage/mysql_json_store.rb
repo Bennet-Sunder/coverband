@@ -46,7 +46,7 @@ module Coverband
           yield(conn)
         end
       rescue Mysql2::Error => e
-        Rails.logger&.error("Coverband MySQL: #{e.message}")
+        NewRelic::Agent.notice_error(e, { error: "Coverband MySQL connection error ##{e.message}" })
         raise
       end
 
@@ -121,9 +121,6 @@ module Coverband
           sql = <<~SQL
             INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at)
             VALUES ('#{escaped_test_case_id}', '#{escaped_request_details}', '#{escaped_file_paths_json}', NOW(), NOW())
-            ON DUPLICATE KEY UPDATE 
-              file_paths = VALUES(file_paths),
-              updated_at = NOW()
           SQL
           
           client.query(sql)
@@ -136,6 +133,7 @@ module Coverband
         else
           puts "Coverband MySQL: Error storing coverage: #{e.message}"
         end
+        NewRelic::Agent.notice_error(e, { error: "Coverband Store mysql error ##{e.message}" })
         false # Don't raise - coverage errors shouldn't break your app
       rescue => e
         if defined?(Rails) && Rails.logger
