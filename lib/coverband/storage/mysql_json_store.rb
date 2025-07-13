@@ -7,7 +7,7 @@ require 'mysql2'
 module Coverband
   module Storage
     ##
-    # MySQL JSON storage adapter using mysql2 with connection pooling
+    # MySQL JSON storage adapter using mysql2 with connection pooling and batching
     # This adapter provides database independence from ActiveRecord
     ##
     class MysqlJsonStore < Coverband::Adapters::Base
@@ -31,23 +31,30 @@ module Coverband
         }.merge(mysql_config)
         
         # Create connection pool
-        pool_size = mysql_config[:pool_size] || 10
+        pool_size = mysql_config[:pool_size] || 20
         pool_timeout = mysql_config[:pool_timeout] || 10
         
         @pool = ConnectionPool.new(size: pool_size, timeout: pool_timeout) do
           Mysql2::Client.new(config)
         end
+        
+        # Simple size-based batching - flush when batch reaches target size
+        @batch_size = mysql_config[:batch_size] || 50
+        @batch_buffer = []
+        @batch_mutex = Mutex.new
+        
+        # Register exit handler to flush any remaining data
+        at_exit { flush_batch }
       end
       
       def connection
         @pool.with do |conn|
-          # Simple ping check before use
-          conn.ping
           yield(conn)
         end
-      rescue Mysql2::Error => e
-        NewRelic::Agent.notice_error(e, { error: "Coverband MySQL connection error ##{e.message}" })
-        raise
+      rescue Exception => e
+        # NewRelic::Agent.notice_error(e, { error: "Coverband MySQL connection error ##{e.message}" })
+        # raise
+        puts "Coverband MySQL: Connection error: #{e.message} with class #{e.class}"
       end
 
       def clear!
@@ -99,50 +106,24 @@ module Coverband
       
       
       ##
-      # Core storage methods using mysql2 with connection pooling
+      # Core storage methods using mysql2 with connection pooling and batching
       ##
       
       def store_coverage(test_case_details, file_paths)
         return false if file_paths.nil? || file_paths.empty?
         
-        connection do |client|
-          file_paths_json = file_paths.to_json
-          test_case_details_json = test_case_details.to_json
-          # Use mysql2's escape method for proper escaping
-          test_case_id = test_case_details[:test_id] || test_case_details['test_id']
-          
-          # Validate test_case_id exists
-          return false unless test_case_id
-          
-          escaped_test_case_id = client.escape(test_case_id.to_s)
-          escaped_request_details = client.escape(test_case_details_json)
-          escaped_file_paths_json = client.escape(file_paths_json)
-          
-          sql = <<~SQL
-            INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at)
-            VALUES ('#{escaped_test_case_id}', '#{escaped_request_details}', '#{escaped_file_paths_json}', NOW(), NOW())
-          SQL
-          
-          client.query(sql)
-          true
-        end
-      rescue Mysql2::Error => e
-        if defined?(Rails) && Rails.logger
-          Rails.logger.error("Coverband MySQL: Error storing coverage: #{e.message}")
-          Rails.logger.error("Coverband MySQL: Backtrace: #{e.backtrace.join("\n")}")
-        else
-          puts "Coverband MySQL: Error storing coverage: #{e.message}"
-        end
-        NewRelic::Agent.notice_error(e, { error: "Coverband Store mysql error ##{e.message}" })
-        false # Don't raise - coverage errors shouldn't break your app
-      rescue => e
-        if defined?(Rails) && Rails.logger
-          Rails.logger.error("Coverband MySQL: Unexpected error storing coverage: #{e.message}")
-          Rails.logger.error("Coverband MySQL: Backtrace: #{e.backtrace.join("\n")}")
-        else
-          puts "Coverband MySQL: Unexpected error storing coverage: #{e.message}"
-        end
-        false
+        test_case_id = test_case_details[:test_id] || test_case_details['test_id']
+        return false unless test_case_id
+        
+        # Add to batch instead of immediate write
+        batch_item = {
+          test_case_id: test_case_id.to_s,
+          request_details: test_case_details.to_json,
+          file_paths: file_paths.to_json,
+          timestamp: Time.now
+        }
+        
+        add_to_batch(batch_item)
       end
       
       def find_test_cases_by_file(file_path)
@@ -215,17 +196,120 @@ module Coverband
       
       
       private
-
-      def should_retry?(error)
-        # Retry on connection-related errors
+      
+      def add_to_batch(item)
+        should_flush = false
+        
+        @batch_mutex.synchronize do
+          @batch_buffer << item
+          
+          # Check if we should flush based on size
+          should_flush = @batch_buffer.size >= @batch_size
+        end
+        
+        flush_batch if should_flush
+        true
+      rescue => e
+        # Log error but don't break the application
+        if defined?(Rails) && Rails.logger
+          Rails.logger.error("Coverband MySQL: Error adding to batch: #{e.message}")
+        else
+          puts "Coverband MySQL: Error adding to batch: #{e.message}"
+        end
+        false
+      end
+      
+      def flush_batch
+        items_to_flush = nil
+        
+        @batch_mutex.synchronize do
+          return if @batch_buffer.empty?
+          items_to_flush = @batch_buffer.dup
+          @batch_buffer.clear
+        end
+        
+        return unless items_to_flush && !items_to_flush.empty?
+        
+        batch_insert(items_to_flush)
+      rescue => e
+        # On flush error, we lose this batch but log it
+        if defined?(Rails) && Rails.logger
+          Rails.logger.error("Coverband MySQL: Error flushing batch of #{items_to_flush&.size} items: #{e.message}")
+        else
+          puts "Coverband MySQL: Error flushing batch of #{items_to_flush&.size} items: #{e.message}"
+        end
+      end
+      
+      def batch_insert(items)
+        return if items.empty?
+        
+        # Build bulk INSERT statement
+        values_array = items.map do |item|
+          connection do |client|
+            escaped_test_case_id = client.escape(item[:test_case_id])
+            escaped_request_details = client.escape(item[:request_details])
+            escaped_file_paths = client.escape(item[:file_paths])
+            "('#{escaped_test_case_id}', '#{escaped_request_details}', '#{escaped_file_paths}', NOW(), NOW())"
+          end
+        end.compact
+        
+        return if values_array.empty?
+        
+        sql = <<~SQL
+          INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at)
+          VALUES #{values_array.join(', ')}
+        SQL
+        
+        connection do |client|
+          client.query(sql)
+        end
+        
+        if defined?(Rails) && Rails.logger
+          # puts "Coverband MySQL: Batch inserted #{items.size} coverage records"
+          # Rails.logger.info("Coverband MySQL: Batch inserted #{items.size} coverage records")
+          NewRelic::Agent.notice_error(e, { error: "Coverband Batch: successfully inserted #{items.size}" })
+        end
+      rescue Mysql2::Error => e
+        NewRelic::Agent.notice_error(e, { error: "Coverband Batch: failed #{e.message} with backtrace #{e.backtrace.join("\n")}" })
+        if defined?(Rails) && Rails.logger
+          Rails.logger.error("Coverband MySQL: Error in batch insert: #{e.message}")
+        else
+          puts "Coverband MySQL: Error in batch insert: #{e.message}"
+        end
+        
+        # Optionally fall back to individual inserts for the batch
+        fallback_individual_inserts(items) if should_retry_individual?(e)
+      end
+      
+      def fallback_individual_inserts(items)
+        items.each do |item|
+          begin
+            individual_insert(item)
+          rescue => e
+            # Log but continue with other items
+            puts "Coverband MySQL: Failed individual insert fallback: #{e.message}"
+          end
+        end
+      end
+      
+      def individual_insert(item)
+        sql = <<~SQL
+          INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at)
+          VALUES (?, ?, ?, NOW(), NOW())
+        SQL
+        
+        connection do |client|
+          # Use prepared statement for safety
+          stmt = client.prepare(sql)
+          stmt.execute(item[:test_case_id], item[:request_details], item[:file_paths])
+          stmt.close
+        end
+      end
+      
+      def should_retry_individual?(error)
+        # Only retry individual inserts for certain errors (not connection errors)
         case error.message
-        when /Lost connection to MySQL server/,
-             /MySQL server has gone away/,
-             /Can't connect to MySQL server/,
-             /Connection refused/,
-             /Timeout/,
-             /broken pipe/i,
-             /connection reset/i
+        when /Duplicate entry/, /Data too long/
           true
         else
           false
