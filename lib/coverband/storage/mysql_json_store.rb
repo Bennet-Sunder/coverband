@@ -193,7 +193,6 @@ module Coverband
           # Check if we should flush based on size
           should_flush = @batch_buffer.size >= @batch_size
         end
-        
         flush_batch if should_flush
         true
       rescue => e
@@ -214,7 +213,6 @@ module Coverband
           items_to_flush = @batch_buffer.dup
           @batch_buffer.clear
         end
-        
         return unless items_to_flush && !items_to_flush.empty?
         
         batch_insert(items_to_flush)
@@ -234,7 +232,7 @@ module Coverband
         chunk_size = 10
         prepared_chunks = items.each_slice(chunk_size).map do |chunk|
           # Build multi-value INSERT statement
-          Rails.info.logger("Coverband: Writing to Mysql IDS #{chunk.map{ |c| c[:test_case_id] }.uniq}")
+          Rails.logger.info("Coverband: Writing to Mysql IDS #{chunk.map{ |c| c[:test_case_id] }.uniq}")
           placeholders = chunk.map { "(?, ?, ?, NOW(), NOW())" }.join(", ")
           sql = <<~SQL
             INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at)
