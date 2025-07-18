@@ -77,7 +77,7 @@ module Coverband
           coverage_results = Coverband::Collectors::DatadogCoverage.stop_single_threaded_coverage
           Coverband.configuration.store.save_report(coverage_results, test_case_details)
         rescue => e
-          puts "FAILED: Storing sidekiq coverage for test case: #{test_case_details.inspect} with error: #{e.message}"
+          puts "FAILED: Storing sidekiq coverage for test case: #{test_case_details.inspect} with error: #{e.message} and #{e.backtrace.join("\n")}"
         end
       end
 
@@ -150,25 +150,7 @@ module Coverband
       end
 
       def initialize_ruby_coverage
-        # Initialize Ruby's built-in Coverage
-        require "coverage"
-        if RUBY_PLATFORM == "java"
-          unless ::Coverage.respond_to?(:line_stub)
-            require "coverband/utils/jruby_ext"
-          end
-        end
-        if defined?(SimpleCov) && defined?(Rails) && defined?(Rails.env) && Rails.env.test?
-          puts "Coverband: detected SimpleCov in test Env, allowing it to start Coverage"
-          puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
-        elsif ::Coverage.respond_to?(:state)
-          if ::Coverage.state == :idle
-            ::Coverage.start(lines: true, methods: true)
-          elsif ::Coverage.state == :suspended
-            ::Coverage.resume
-          end
-        else
-          ::Coverage.start(lines: true, methods: true) unless ::Coverage.running?
-        end
+
       end
     end
   end
