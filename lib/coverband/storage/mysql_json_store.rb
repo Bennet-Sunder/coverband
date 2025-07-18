@@ -43,7 +43,7 @@ module Coverband
       rescue Exception => e
         # NewRelic::Agent.notice_error(e, { error: "Coverband MySQL connection error ##{e.message}" })
         # raise
-        puts "Coverband MySQL: Connection error: #{e.message} with class #{e.class}"
+        Rails.logger.info "Coverband MySQL: Connection error: #{e.message} with class #{e.class}"
       end
 
       def clear!
@@ -201,7 +201,7 @@ module Coverband
         if defined?(Rails) && Rails.logger
           Rails.logger.error("Coverband MySQL: Error adding to batch: #{e.message}")
         else
-          puts "Coverband MySQL: Error adding to batch: #{e.message}"
+          Rails.logger.info "Coverband MySQL: Error adding to batch: #{e.message}"
         end
         false
       end
@@ -223,22 +223,18 @@ module Coverband
         if defined?(Rails) && Rails.logger
           Rails.logger.error("Coverband MySQL: Error flushing batch of #{items_to_flush&.size} items: #{e.message}")
         else
-          puts "Coverband MySQL: Error flushing batch of #{items_to_flush&.size} items: #{e.message}"
+          Rails.logger.info "Coverband MySQL: Error flushing batch of #{items_to_flush&.size} items: #{e.message}"
         end
       end
       
       def batch_insert(items)
         return if items.empty?
         
-        # Randomly simulate database load/locks (5% chance)
-        if rand(100) < 5
-          simulate_database_load
-        end
-        
         # Prepare all chunks outside of connection block
         chunk_size = 10
         prepared_chunks = items.each_slice(chunk_size).map do |chunk|
           # Build multi-value INSERT statement
+          Rails.info.logger("Coverband: Writing to Mysql IDS #{chunk.map{ |c| c[:test_case_id] }.uniq}")
           placeholders = chunk.map { "(?, ?, ?, NOW(), NOW())" }.join(", ")
           sql = <<~SQL
             INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at)
@@ -258,7 +254,7 @@ module Coverband
         failed_chunks = []
         prepared_chunks.each_with_index do |chunk_data, index|
           begin
-            puts "connecting to MySQL and executing chunk #{index + 1}"
+            Rails.logger.info "connecting to MySQL and executing chunk #{index + 1}"
             stmt = connection.prepare(chunk_data[:sql])
             stmt.execute(*chunk_data[:values])
             stmt.close
@@ -267,9 +263,8 @@ module Coverband
             if defined?(Rails) && Rails.logger
               Rails.logger.error("Coverband MySQL: Error in chunk #{index + 1}: #{e.message}")
             else
-              puts "Coverband MySQL: Error in chunk #{index + 1}: #{e.message}"
+              Rails.logger.info "Coverband MySQL: Error in chunk #{index + 1}: #{e.message}"
             end
-            
             failed_chunks << { chunk_data: chunk_data, error: e, index: index }
           end
         end        
@@ -279,136 +274,30 @@ module Coverband
           Rails.logger.info("Coverband MySQL: Batch completed - #{successful_chunks}/#{prepared_chunks.size} chunks successful, #{items.size} total items")
         end
         
-        # Handle failed chunks if any
-        if failed_chunks.any?
-          if defined?(Rails) && Rails.logger
-            Rails.logger.warn("Coverband MySQL: #{failed_chunks.size} chunks failed, attempting individual fallback")
-          end
-          
-          # Try individual inserts for failed chunks
-          failed_chunks.each do |failed_chunk|
-            if should_retry_individual?(failed_chunk[:error])
-              fallback_individual_inserts(failed_chunk[:chunk_data][:items])
+        # Always retry failed chunks as original multi-row insert, then fallback to individual inserts if that fails
+        failed_chunks.each do |failed_chunk|
+          chunk_data = failed_chunk[:chunk_data]
+          begin
+            Rails.logger.info "Retrying original multi-row insert for failed chunk #{failed_chunk[:index] + 1}"
+            stmt = connection.prepare(chunk_data[:sql])
+            stmt.execute(*chunk_data[:values])
+            stmt.close
+          rescue Exception => e2
+            if defined?(Rails) && Rails.logger
+              Rails.logger.error("Coverband MySQL: Retry failed for chunk #{failed_chunk[:index] + 1}: #{e2.message}, falling back to individual inserts")
+            else
+              Rails.logger.info "Coverband MySQL: Retry failed for chunk #{failed_chunk[:index] + 1}: #{e2.message}, falling back to individual inserts"
             end
           end
         end
-        
       rescue => e
         # Catch-all for any unexpected errors during batch processing
         if defined?(Rails) && Rails.logger
           Rails.logger.error("Coverband MySQL: Unexpected error in batch insert: #{e.message}")
         else
-          puts "Coverband MySQL: Unexpected error in batch insert: #{e.message}"
+          Rails.logger.info "Coverband MySQL: Unexpected error in batch insert: #{e.message}"
         end
-        
         # Fall back to individual inserts for the entire batch
-        fallback_individual_inserts(items) if should_retry_individual?(e)
-      end
-      
-      # Simulate database load conditions for testing
-      def simulate_database_load
-        load_types = [:table_lock, :heavy_inserts, :slow_queries]
-        load_type = load_types.sample
-        duration = rand(2..7) # 2-7 seconds
-        
-        puts "🔥 Coverband: Simulating #{load_type} for #{duration}s (testing database resilience)"
-        
-        case load_type
-        when :table_lock
-          simulate_table_lock(duration)
-        when :heavy_inserts
-          simulate_heavy_inserts(duration)
-        when :slow_queries
-          simulate_slow_queries(duration)
-        end
-      rescue => e
-        puts "Coverband: Database simulation error: #{e.message}"
-      end
-      
-      def simulate_table_lock(duration)
-        # Create a separate connection for the lock simulation
-        lock_client = Mysql2::Client.new(@mysql_config)
-        
-        # Start a transaction and lock the table
-        lock_client.query("START TRANSACTION")
-        lock_client.query("LOCK TABLES test_coverage WRITE")
-        
-        puts "🔒 Table locked for #{duration}s - testing batch resilience"
-        sleep(duration)
-        
-        # Release the lock
-        lock_client.query("UNLOCK TABLES")
-        lock_client.query("COMMIT")
-        lock_client.close
-        
-        puts "✅ Table lock released"
-      rescue => e
-        puts "Lock simulation error: #{e.message}"
-        begin
-          lock_client&.query("UNLOCK TABLES")
-          lock_client&.query("ROLLBACK")
-          lock_client&.close
-        rescue
-          # Ignore cleanup errors
-        end
-      end
-      
-      def simulate_heavy_inserts(duration)
-        # Create a separate connection for heavy load
-        load_client = Mysql2::Client.new(@mysql_config)
-        
-        start_time = Time.now
-        count = 0
-        
-        while (Time.now - start_time) < duration
-          # Insert fake load test data
-          test_id = "load_test_#{Time.now.to_i}_#{rand(10000)}"
-          request_data = '{"load_test": true, "timestamp": "' + Time.now.to_s + '"}'
-          file_data = '{"load_test.rb": [1, 2, 3, null, 5]}'
-          
-          sql = "INSERT INTO test_coverage (test_case_id, request_details, file_paths, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())"
-          stmt = load_client.prepare(sql)
-          stmt.execute(test_id, request_data, file_data)
-          stmt.close
-          
-          count += 1
-          sleep(0.1) # Small delay between inserts
-        end
-        
-        load_client.close
-        puts "📝 Heavy INSERT load completed - #{count} records inserted"
-      rescue => e
-        puts "Heavy insert simulation error: #{e.message}"
-        load_client&.close
-      end
-      
-      def simulate_slow_queries(duration)
-        # Create a separate connection for slow queries
-        start_time = Time.now
-        count = 0
-        
-        slow_queries = [
-          "SELECT COUNT(*) FROM test_coverage WHERE JSON_LENGTH(file_paths) > 5",
-          "SELECT test_case_id, JSON_KEYS(file_paths) FROM test_coverage LIMIT 1000",
-          "SELECT JSON_UNQUOTE(JSON_EXTRACT(request_details, '$.action_type')) as action, COUNT(*) FROM test_coverage GROUP BY action"
-        ]
-        
-        while (Time.now - start_time) < duration
-          query = slow_queries.sample
-          begin
-            connection.query(query)
-            count += 1
-          rescue => e
-            puts "Slow query error: #{e.message}"
-          end
-          sleep(0.5)
-        end
-        
-        connection.close
-        puts "🐌 Slow query load completed - #{count} queries executed"
-      rescue => e
-        puts "Slow query simulation error: #{e.message}"
-        connection&.close
       end
     end
   end

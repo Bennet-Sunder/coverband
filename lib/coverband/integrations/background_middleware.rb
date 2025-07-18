@@ -22,8 +22,8 @@ module Coverband
       else
         env['HTTP_X_TEST_CASE_ID']
       end
-      Rails.logger.info("Coverband: Started tracing for #{original_test_case_id}")
       if original_test_case_id&.present?
+        Rails.logger.info("Coverband: Started tracing for #{original_test_case_id}")
         # Coverband.start_datadog_coverage
         coverage_instance = Coverband::Collectors::DatadogCoverage.initialize_multi_threaded_coverage
         coverage_instance.start
