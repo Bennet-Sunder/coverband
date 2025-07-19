@@ -46,18 +46,10 @@ module Coverband
         # Convert hash to array (key optimization)
         file_paths_array = file_paths_hash.keys
         
-        # Optimize request details - keep only essential data
-        optimized_request_details = {
-          test_id: test_case_details[:test_id] || test_case_details['test_id'],
-          worker_name: test_case_details[:worker_name] || test_case_details['worker_name'],
-          jid: test_case_details[:jid] || test_case_details['jid'],
-          request_id: test_case_details[:request_id] || test_case_details['request_id']
-        }.compact
-        
         # Add to batch instead of immediate write
         batch_item = {
           test_case_id: test_case_id.to_s,
-          request_details: optimized_request_details,  # ActiveRecord handles JSON serialization
+          request_details: test_case_details,  # ActiveRecord handles JSON serialization
           file_paths: file_paths_array,               # ActiveRecord handles JSON serialization
           timestamp: Time.now
         }

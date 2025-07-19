@@ -15,16 +15,14 @@ module Coverband
     def initialize(app)
       @app = app
     end
+
     def call(env)
       test_case_data = nil
-      original_test_case_id = if BaseRedis.key_exists?(Redis::RedisKeys::COVERBAND_ALL_REQUESTS)
-        SecureRandom.random_number(Redis::RedisKeys::COVERBAND_TEST_CASE_RANGE)
-      else
+      original_test_case_id = if should_trace?(env)
         env['HTTP_X_TEST_CASE_ID']
       end
       if original_test_case_id&.present?
         Rails.logger.info("Coverband: Started tracing for #{original_test_case_id}")
-        # Coverband.start_datadog_coverage
         coverage_instance = Coverband::Collectors::DatadogCoverage.initialize_multi_threaded_coverage
         coverage_instance.start
         test_case_data = {
@@ -34,7 +32,6 @@ module Coverband
           response_code: nil,
           request_id: env['action_dispatch.request_id']
         }
-        # storage_data = compress_keys(test_case_data)
         Thread.current[:coverband_test_case_id] = test_case_data
         Rails.logger.info("Coverband: Initial test case data: #{Thread.current[:coverband_test_case_id]}")
       else
@@ -42,10 +39,8 @@ module Coverband
       end
 
       status, headers, response = @app.call(env)
-      
       if test_case_data
         test_case_data[:response_code] = status
-        # storage_data = compress_keys(test_case_data)
         Rails.logger.info("Coverband: Updated test case data with status code: #{test_case_data}")
       end
       [status, headers, response]
@@ -62,7 +57,11 @@ module Coverband
     end
     
     private
-    
+
+    def should_trace?(env)
+      env['HTTP_X_TEST_CASE_ID'].present? && BaseRedis.key_exists?(Redis::RedisKeys::COVERBAND_ALL_REQUESTS)
+    end
+
     def compress_keys(data)
       data.transform_keys { |k| FIELD_MAPPING[k] || k }
     end
