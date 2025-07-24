@@ -34,7 +34,43 @@ module Coverband
       
       def save_report(coverage_map, test_case_details = {})
         coverage_map.transform_keys! { |file| file.to_s.gsub(PWD_DIR, '') }
+        
+        # Handle both Redis-style and hash-style parameters for compatibility
+        if test_case_details.is_a?(String) || test_case_details.is_a?(Integer)
+          # Redis-style: save_report(coverage_map, test_case_id)
+          test_case_details = { test_id: test_case_details.to_s }
+        elsif test_case_details.is_a?(Hash)
+          # Hash-style: save_report(coverage_map, {test_id: "123", ...})
+          # Already in correct format
+        else
+          # Default case
+          test_case_details = {}
+        end
+        
         store_coverage(test_case_details, coverage_map)
+      end
+      
+      def save_method_report(report, test_case_details = nil)
+        return if report.nil? || report.empty?
+        return unless test_case_details.is_a?(Hash) && test_case_details[:test_id]
+        
+        # Extract method coverage data from the report
+        method_trace = extract_method_coverage(report)
+        return if method_trace.empty?
+        
+        # Store method-level coverage alongside file-level coverage
+        batch_item = {
+          test_case_id: test_case_details[:test_id].to_s,
+          request_details: test_case_details.merge(coverage_type: 'method'),
+          file_paths: method_trace.keys, # Files that have method coverage
+          method_trace: method_trace,    # Store the actual method coverage data
+          timestamp: Time.now
+        }
+        
+        add_to_batch(batch_item)
+      rescue => e
+        Rails.logger.error("Coverband MySQL: Error saving method report: #{e.message}")
+        false
       end
       
       def store_coverage(test_case_details, file_paths_hash)
@@ -158,6 +194,50 @@ module Coverband
             Rails.logger.error("Coverband MySQL: Individual ActiveRecord insert failed for test_case_id #{item[:test_case_id]}: #{e.message}")
           end
         end
+      end
+      
+      # Extract method coverage data from coverage report
+      def extract_method_coverage(report)
+        method_trace = {}
+        
+        report.each do |file_path, coverage_data|
+          next unless coverage_data.is_a?(Hash) && coverage_data.key?(:methods)
+          
+          methods = coverage_data[:methods]
+          next if methods.nil? || methods.empty?
+          
+          executed_methods = methods.select { |_, count| count && count > 0 }
+          next if executed_methods.empty?
+          
+          # Convert method identifiers to method names
+          method_names = executed_methods.keys.map do |method_ident|
+            if method_ident.is_a?(Array) && method_ident.length >= 2
+              construct_method_fullname(method_ident)
+            end
+          end.compact
+          
+          # Store relative file path
+          relative_path = file_path.to_s.gsub(PWD_DIR, '')
+          method_trace[relative_path] = method_names if method_names.any?
+        end
+        
+        method_trace
+      end
+      
+      # Construct full method name from method identifier array
+      def construct_method_fullname(method_ident_array)
+        return nil unless method_ident_array.is_a?(Array) && method_ident_array.length >= 2
+        
+        # Method identifier format: [class, method_name, ...]
+        class_name = method_ident_array[0]
+        method_name = method_ident_array[1]
+        
+        return nil if class_name.nil? || method_name.nil?
+        
+        "#{class_name}##{method_name}"
+      rescue => e
+        Rails.logger.error("Coverband MySQL: Error constructing method name: #{e.message}")
+        nil
       end
     end
   end
