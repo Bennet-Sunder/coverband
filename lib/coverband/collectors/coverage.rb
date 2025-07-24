@@ -134,6 +134,7 @@ module Coverband
           puts "Coverband: detected SimpleCov in test Env, allowing it to start Coverage"
           puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
         elsif ::Coverage.respond_to?(:state)
+          byebug
           if ::Coverage.state == :idle
             if Coverband.configuration.use_oneshot_lines_coverage
               ::Coverage.start(oneshot_lines: true) unless ENV["DISABLE_AUTO_START"]
@@ -144,6 +145,7 @@ module Coverband
             ::Coverage.resume
           end
         else
+          byebug
           if Coverband.configuration.use_oneshot_lines_coverage
             ::Coverage.start(oneshot_lines: true) unless ENV["DISABLE_AUTO_START"]
           else

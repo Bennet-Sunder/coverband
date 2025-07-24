@@ -35,6 +35,10 @@ module Coverband
         end
 
         Sidekiq.configure_server do |config|
+          config.client_middleware do |chain|
+            chain.add Coverband::Integrations::SidekiqClientMiddleware
+          end
+
           config.server_middleware do |chain|
             chain.add Coverband::Integrations::SidekiqServerMiddleware
           end
