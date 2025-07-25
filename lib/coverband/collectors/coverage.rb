@@ -51,13 +51,13 @@ module Coverband
       end
 
       def report_new_coverage(test_case_details = {})
-        puts("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
+        Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
           @store.save_report(Delta.results, test_case_details)
         end
       rescue => e
-        puts("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
+        Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
         @logger&.error "coverage failed to store"
         @logger&.error "Coverband Error: #{e.inspect} #{e.message}"
         e.backtrace.each { |line| @logger&.error line } if @verbose
@@ -68,7 +68,7 @@ module Coverband
         coverage_results ||= Delta.results
         Coverband.configuration.store.save_method_report(coverage_results, test_case_details)
       rescue => e
-        puts("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
+        Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
       end      
 
       def self.save_sidekiq_coverage(test_case_details)
@@ -82,7 +82,7 @@ module Coverband
           coverage_results = Delta.results
           Coverband.configuration.store.save_method_report(coverage_results, test_case_details)
         rescue => e
-          puts "FAILED: Storing sidekiq coverage for test case: #{test_case_details.inspect} with error: #{e.message} and #{e.backtrace.join("\n")}"
+          Rails.logger.info "FAILED: Storing sidekiq coverage for test case: #{test_case_details.inspect} with error: #{e.message} and #{e.backtrace.join("\n")}"
         end
       end
 
@@ -140,8 +140,8 @@ module Coverband
           end
         end
         if defined?(SimpleCov) && defined?(Rails) && defined?(Rails.env) && Rails.env.test?
-          puts "Coverband: detected SimpleCov in test Env, allowing it to start Coverage"
-          puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
+          Rails.logger.info "Coverband: detected SimpleCov in test Env, allowing it to start Coverage"
+          Rails.logger.info "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
         elsif ::Coverage.respond_to?(:state)
           if ::Coverage.state == :idle
             ::Coverage.start(methods: true) unless ENV["DISABLE_AUTO_START"]

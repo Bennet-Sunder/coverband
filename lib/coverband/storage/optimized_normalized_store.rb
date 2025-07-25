@@ -36,7 +36,7 @@ module Coverband
           )
         rescue => e
           Rails.logger.info("Coverband: Error saving coverage: #{e.message}")
-          Rails.logger.info(e.backtrace.join("\n")) if Coverband.configuration.verbose
+          Rails.logger.info(e.backtrace.join("\n"))
           false
         end
       end

@@ -21,7 +21,7 @@ module Coverband
       end
       
       if original_test_case_id&.present?
-        puts("Coverband: Started tracing for #{original_test_case_id}")
+        Rails.logger.info("Coverband: Started tracing for #{original_test_case_id}")
         # Use Ruby's Coverage module - simple and reliable
         ::Coverage.result(clear: true, stop: false)
         test_case_data = {
@@ -32,7 +32,7 @@ module Coverband
           request_id: env['action_dispatch.request_id']
         }
         Thread.current[:coverband_test_case_id] = test_case_data
-        puts("Coverband: Initial test case data: #{Thread.current[:coverband_test_case_id]}")
+        Rails.logger.info("Coverband: Initial test case data: #{Thread.current[:coverband_test_case_id]}")
       else
         Thread.current[:coverband_test_case_id] = nil
       end
@@ -40,7 +40,7 @@ module Coverband
       status, headers, response = @app.call(env)
       if test_case_data
         test_case_data[:response_code] = status
-        puts("Coverband: Updated test case data with status code: #{test_case_data}")
+        Rails.logger.info("Coverband: Updated test case data with status code: #{test_case_data}")
       end
       [status, headers, response]
     ensure
