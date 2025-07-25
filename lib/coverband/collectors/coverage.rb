@@ -51,26 +51,39 @@ module Coverband
       end
 
       def report_new_coverage(test_case_details = {})
-        Rails.logger.info("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
+        puts("Coverband: report_coverage test case ID: #{test_case_details.inspect}")
         @semaphore.synchronize do
           raise "no Coverband store set" unless @store
-          final_processing_time = 0
-          test_report = {}
-          unless ENV['DISABLE_AUTO_START']
-            final_processing_time = Benchmark.realtime do
-              test_report = filtered_files(Delta.results) 
-              test_report = ::Coverage.result(clear: true, stop: false)
-            end
-          end
-          @store.save_method_report(test_report, test_case_details)
-          final_processing_time
+          @store.save_report(Delta.results, test_case_details)
         end
       rescue => e
-        Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
+        puts("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
         @logger&.error "coverage failed to store"
         @logger&.error "Coverband Error: #{e.inspect} #{e.message}"
         e.backtrace.each { |line| @logger&.error line } if @verbose
         raise e if @test_env      
+      end
+
+      def self.save_multithreaded_coverage(test_case_details = {}, coverage_results = nil)
+        coverage_results ||= Delta.results
+        Coverband.configuration.store.save_method_report(coverage_results, test_case_details)
+      rescue => e
+        puts("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
+      end      
+
+      def self.save_sidekiq_coverage(test_case_details)
+        begin
+          # NOTE: This uses Ruby's Coverage module which is process-global, not thread-local.
+          # In a multi-threaded Sidekiq environment, this coverage data may include methods
+          # called by concurrent jobs running in other threads.
+          #
+          # This is a fundamental limitation of Ruby's Coverage module and cannot be easily
+          # worked around without significant performance overhead or architectural changes.
+          coverage_results = Delta.results
+          Coverband.configuration.store.save_method_report(coverage_results, test_case_details)
+        rescue => e
+          puts "FAILED: Storing sidekiq coverage for test case: #{test_case_details.inspect} with error: #{e.message} and #{e.backtrace.join("\n")}"
+        end
       end
 
       def report_coverage(test_case_id = nil)
@@ -104,19 +117,15 @@ module Coverband
 
       def filtered_files(new_results)
         new_results.select! do |_file, coverage_data_for_file|
-          if coverage_data_for_file.is_a?(Hash) && coverage_data_for_file.key?(:lines)
-            # New format: { lines: [...], methods: {...} }
-            lines_present = coverage_data_for_file[:lines]&.any? { |value| value&.nonzero? }
+          if coverage_data_for_file.is_a?(Hash) && coverage_data_for_file.key?(:methods)
+            # Methods coverage format: { methods: {...} }
             methods_present = false
-            if coverage_data_for_file.key?(:methods) && coverage_data_for_file[:methods].is_a?(Hash)
+            if coverage_data_for_file[:methods].is_a?(Hash)
               methods_present = coverage_data_for_file[:methods]&.any? { |_method_ident_array, count| count&.nonzero? }
             end
-            lines_present || methods_present
-          elsif coverage_data_for_file.is_a?(Array)
-            # Old format or lines-only: [...]
-            coverage_data_for_file.any? { |value| value&.nonzero? }
+            methods_present
           else
-            false # Unknown format, filter out
+            false # Unknown format or no methods coverage, filter out
           end
         end
         new_results # select! modifies in place, but returning is fine for clarity
@@ -134,23 +143,13 @@ module Coverband
           puts "Coverband: detected SimpleCov in test Env, allowing it to start Coverage"
           puts "Coverband: to ensure no error logs or missing Coverage call `SimpleCov.start` prior to requiring Coverband"
         elsif ::Coverage.respond_to?(:state)
-          byebug
           if ::Coverage.state == :idle
-            if Coverband.configuration.use_oneshot_lines_coverage
-              ::Coverage.start(oneshot_lines: true) unless ENV["DISABLE_AUTO_START"]
-            else
-              ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
-            end
+            ::Coverage.start(methods: true) unless ENV["DISABLE_AUTO_START"]
           elsif ::Coverage.state == :suspended
             ::Coverage.resume
           end
         else
-          byebug
-          if Coverband.configuration.use_oneshot_lines_coverage
-            ::Coverage.start(oneshot_lines: true) unless ENV["DISABLE_AUTO_START"]
-          else
-            ::Coverage.start(lines: true, methods: true) unless ENV["DISABLE_AUTO_START"]
-          end
+          ::Coverage.start(methods: true) unless ENV["DISABLE_AUTO_START"]
         end
         reset_instance
       end

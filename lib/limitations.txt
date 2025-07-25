@@ -11,3 +11,21 @@
         end
     end
     puts impacted_data.keys.count
+
+
+gem "datadog-ci"
+
+dd_cov = Datadog::CI::TestOptimisation::Coverage::DDCov.new(
+    root: Dir.pwd,
+    ignored_path: nil,
+    threading_mode: :multi,
+    use_allocation_tracing: false
+  )
+
+agent = Agent.first
+Account.first.make_current
+User.first.make_current
+
+dd_cov.start
+AgentBlueprint.render(Agent.first, {view: :api_v2, root: :agents})
+coverage = dd_cov.stop

@@ -6,7 +6,12 @@ module Coverband
       def call(_worker_class, job, _queue, _redis_pool)
         Rails.logger.info "Coverband: Adding test case ID to Sidekiq job #{Thread.current[:coverband_test_case_id]}"
         if Thread.current[:coverband_test_case_id]
-          job['coverband_test_case_id'] = Thread.current[:coverband_test_case_id]
+          job['coverband_test_case_id'] = {
+            test_id: Thread.current[:coverband_test_case_id][:test_id],
+            request_id: Thread.current[:message_uuid],
+            worker_name: _worker_class,
+            jid: job['jid']
+          }
         end
         yield
       end
@@ -15,12 +20,22 @@ module Coverband
     class SidekiqServerMiddleware
       def call(_worker, job, _queue)
         test_case_data = job['coverband_test_case_id']
-        test_case_data['response_code'] = _worker.class
-        Rails.logger.info "Coverband: Starting coverage for test case ID #{test_case_data}"
+        if test_case_data
+          Thread.current[:coverband_test_case_id] = test_case_data
+          ::Coverage.result(clear: true, stop: false)
+        end
         yield
       ensure
         if test_case_data
-          ::Coverband.report_new_coverage(test_case_data)
+          begin
+            # Use Ruby's Coverage module to get method coverage
+            # Note: This is process-wide coverage and may include methods from concurrent jobs
+            # For accurate per-job tracking, we can revisit TracePoint approach later
+            Coverband::Collectors::Coverage.save_sidekiq_coverage(test_case_data)
+          rescue => e
+            NewRelic::Agent.notice_error(e, { error: "Coverband storage failed for #{test_case_data.to_json}" })
+            Rails.logger.info("Coverband: Error saving coverage: #{e.message}")
+          end
         end
       end
     end

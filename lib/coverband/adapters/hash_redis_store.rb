@@ -872,6 +872,9 @@ module Coverband
                            class_component.to_s
                          end
         
+        # Simplify the verbose class name to just the clean class name
+        simplified_class_name = simplify_class_name(class_name_str.to_s)
+        
         # Simple method name conversion
         method_name_str = method_name_sym.to_s
         
@@ -884,7 +887,35 @@ module Coverband
                       "#"  # Instance methods (default)
                     end
         
-        "#{class_name_str}#{separator}#{method_name_str}"
+        "#{simplified_class_name}#{separator}#{method_name_str}"
+      end
+
+      # Simplify verbose ActiveRecord class names to clean format
+      # Input: "#<Class:Cmdb::CiLevel_0Field(id: integer, config_item_id: integer, ...)>"
+      # Output: "Cmdb::CiLevel_0Field"
+      def simplify_class_name(verbose_class_name)
+        # Handle the #<Class:ClassName(...)> format from ActiveRecord models
+        if verbose_class_name.match(/^#<Class:([^(]+)/)
+          # Extract just the class name before the parentheses
+          class_name = $1
+          return class_name
+        end
+        
+        # Handle other #<ClassName> formats
+        if verbose_class_name.match(/^#<([^>]+)>/)
+          return $1
+        end
+        
+        # Handle regular class names that might have extra content
+        if verbose_class_name.match(/^([A-Z][a-zA-Z0-9_:]*[a-zA-Z0-9_])/)
+          return $1
+        end
+        
+        # Return as-is if no pattern matches (fallback)
+        verbose_class_name
+      rescue => e
+        Rails.logger.error("Coverband: Error simplifying class name: #{e.message}")
+        verbose_class_name # Return original on error
       end
 
       # Generates the Redis key for storing method coverage for a specific file.
