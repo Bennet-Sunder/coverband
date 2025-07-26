@@ -11,7 +11,7 @@ module Coverband
       def initialize(mysql_config = {})
         super()
         @mysql_config = mysql_config
-        @processor = Coverband::CoverageProcessor.new
+        @processor = Coverband::CoverageProcessor.new(shard_name: mysql_config[:shard_name])
       end
 
       def save_report(coverage_data, test_case_details = {})
@@ -27,7 +27,6 @@ module Coverband
         begin
           method_coverage = extract_method_coverage(coverage_data)
           return false if method_coverage.empty?
-
           process_coverage(
             test_case_details[:test_id],
             test_case_details,
@@ -71,7 +70,7 @@ module Coverband
       end
 
       def extract_method_coverage(report)
-        method_coverage = {}
+        method_coverage = []
         
         report.each do |file_path, coverage_data|
           next unless coverage_data.is_a?(Hash) && coverage_data.key?(:methods)
@@ -83,32 +82,35 @@ module Coverband
           executed_methods = methods.select { |_, count| count && count > 0 }
           next if executed_methods.empty?
           
-          # Convert method identifiers to method names
-          method_names = executed_methods.keys.map do |method_ident|
-            if method_ident.is_a?(Array) && method_ident.length >= 2
-              construct_method_fullname(method_ident)
-            end
-          end.compact
-          
-          # Store relative file path
           relative_path = file_path.to_s.gsub(PWD_DIR, '')
-          method_coverage[relative_path] = method_names if method_names.any?
+          
+          # Convert method identifiers to method names
+          executed_methods.keys.each do |method_ident|
+            if method_ident.is_a?(Array) && method_ident.length >= 2
+              method_coverage << construct_method_fullname(relative_path, method_ident)
+            end
+          end
         end
         
         method_coverage
       end
 
-      def construct_method_fullname(method_ident_array)
+      def construct_method_fullname(file_path, method_ident_array)
         return nil unless method_ident_array.is_a?(Array) && method_ident_array.length >= 2
         
         # Method identifier format: [class, method_name, ...]
         class_name = method_ident_array[0]
         method_name = method_ident_array[1]
-        
+        simplified_class_name = simplify_class_name(class_name.to_s)
         return nil if class_name.nil? || method_name.nil?
         
         # Simplify the class name and build the full method name
-        "#{simplify_class_name(class_name.to_s)}##{method_name}"
+        {
+          file_path: file_path,
+          class_name: simplified_class_name,
+          method_name: method_name,
+          full_method_name: "#{simplified_class_name}##{method_name}"
+        }
       rescue => e
         Rails.logger.error("Coverband: Error constructing method name: #{e.message}")
         nil

@@ -8,29 +8,31 @@ require 'json'
 
 module Coverband
   class CoverageProcessor
-    def initialize(max_retries: 3, base_delay: 0.1)
-      @max_retries = max_retries
-      @base_delay = base_delay
+    def initialize(shard_name: 'shard_1')
+      @shard_name = shard_name
     end
 
     def process_coverage_data(test_case_id, request_details, coverage_data)
       return false if test_case_id.nil? || coverage_data.nil? || coverage_data.empty?
       request_id = request_details[:jid] || request_details[:request_id] || "req_#{SecureRandom.hex(8)}"
 
-      Coverband::TestCase.insert_all([{
-          test_case_id: test_case_id
-      }])
+      Sharding.run_on_shard(@shard_name) do
+          Coverband::TestCase.insert_all([{
+            test_case_id: test_case_id
+        }])
 
-      Coverband::Request.insert_all([{
-          request_id: request_id,
-          test_case_id: test_case_id,
-          request_details: request_details
-      }])
+        Coverband::Request.insert_all([{
+            request_id: request_id,
+            test_case_id: test_case_id,
+            request_details: request_details
+        }])
 
-      Coverband::CoverageMethod.insert_all(coverage_data)
-      method_map = build_method_id_map(request_id, coverage_data)
-      return false if method_map.empty?
-      Coverband::TestCoverage.insert_all(method_map)
+        Coverband::CoverageMethod.insert_all(coverage_data)
+        method_map = build_method_id_map(request_id, coverage_data)
+        return false if method_map.empty?
+        Coverband::TestCoverage.insert_all(method_map)        
+      end
+
     rescue => e
       Rails.logger.info("Coverband: Final error in process_coverage_data: #{e.message}")
       NewRelic::Agent.notice_error(e)
