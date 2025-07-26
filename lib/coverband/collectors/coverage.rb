@@ -64,8 +64,11 @@ module Coverband
         raise e if @test_env      
       end
 
-      def self.save_multithreaded_coverage(test_case_details = {}, coverage_results = nil)
-        coverage_results ||= Delta.results
+      def self.save_multithreaded_coverage(test_case_details = {})
+        coverage_results = ::Coverage.result(clear: true, stop: false)
+        if coverage_results.nil? || coverage_results.empty?
+          Rails.logger.info("Coverband: No coverage results for test case #{test_case_details.inspect}")
+        end
         Coverband.configuration.store.save_method_report(coverage_results, test_case_details)
       rescue => e
         Rails.logger.info("Coverband: Coverage storage failed for test case ID: #{test_case_details.inspect}")
