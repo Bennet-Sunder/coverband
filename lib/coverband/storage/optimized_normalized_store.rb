@@ -11,8 +11,7 @@ module Coverband
       def initialize(mysql_config = {})
         super()
         @mysql_config = mysql_config
-        @batch_size = mysql_config[:batch_size] || 1000
-        @processor = Coverband::CoverageProcessor.new(batch_size: @batch_size)
+        @processor = Coverband::CoverageProcessor.new
       end
 
       def save_report(coverage_data, test_case_details = {})
