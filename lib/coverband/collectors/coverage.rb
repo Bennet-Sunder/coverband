@@ -82,7 +82,7 @@ module Coverband
           #
           # This is a fundamental limitation of Ruby's Coverage module and cannot be easily
           # worked around without significant performance overhead or architectural changes.
-          coverage_results = Delta.results
+          coverage_results = ::Coverage.result(clear: true, stop: false)
           Coverband.configuration.store.save_method_report(coverage_results, test_case_details)
         rescue => e
           Rails.logger.info "FAILED: Storing sidekiq coverage for test case: #{test_case_details.inspect} with error: #{e.message} and #{e.backtrace.join("\n")}"
