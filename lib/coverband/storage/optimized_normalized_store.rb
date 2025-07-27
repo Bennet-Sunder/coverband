@@ -11,7 +11,7 @@ module Coverband
       def initialize(mysql_config = {})
         super()
         @mysql_config = mysql_config
-        @processor = Coverband::CoverageProcessor.new(shard_name: mysql_config[:shard_name])
+        @processor = Coverband::CoverageProcessor.new(shard_names: mysql_config[:shard_names])
       end
 
       def save_report(coverage_data, test_case_details = {})
