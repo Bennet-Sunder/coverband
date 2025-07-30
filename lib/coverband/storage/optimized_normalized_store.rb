@@ -7,6 +7,7 @@ module Coverband
   module Storage
     class OptimizedNormalizedStore < Coverband::Adapters::Base
       PWD_DIR = Dir.pwd + '/'
+      attr_reader :processor
       
       def initialize(mysql_config = {})
         super()

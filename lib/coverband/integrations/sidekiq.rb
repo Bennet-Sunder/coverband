@@ -20,18 +20,34 @@ module Coverband
     class SidekiqServerMiddleware
       def call(_worker, job, _queue)
         test_case_data = job['coverband_test_case_id']
+        puts "Sideqkiq executing worker #{_worker.class.name}"
+        puts "Sidekiq running on process #{Process.pid}"
+        puts "Sidekiq running on thread #{Thread.current.object_id}"
+        
         if test_case_data
           Thread.current[:coverband_test_case_id] = test_case_data
-          ::Coverage.result(clear: true, stop: false)
+          # Initialize thread-local method calls array
+          Thread.current[:method_calls] = []
+          
+          # Note: Global TracePoint is already enabled and will automatically track
+          # methods for this thread since we set Thread.current[:coverband_test_case_id]
         end
+        
         yield
+        
       ensure
         if test_case_data
           begin
-            # Use Ruby's Coverage module to get method coverage
-            # Note: This is process-wide coverage and may include methods from concurrent jobs
-            # For accurate per-job tracking, we can revisit TracePoint approach later
-            Coverband::Collectors::Coverage.save_sidekiq_coverage(test_case_data)
+            # Get method calls from thread-local storage
+            method_calls = Thread.current[:method_calls] || []
+            
+            # Save method coverage using TracePoint data
+            Coverband::Collectors::TracepointMethodTracker.save_sidekiq_coverage(test_case_data, method_calls)
+            
+            # Clean up thread-local data
+            Thread.current[:coverband_test_case_id] = nil
+            Thread.current[:method_calls] = nil
+            
           rescue => e
             NewRelic::Agent.notice_error(e, { error: "Coverband storage failed for #{test_case_data.to_json}" })
             Rails.logger.info("Coverband: Error saving coverage: #{e.message}")
@@ -49,6 +65,9 @@ if defined?(::Sidekiq)
     config.on(:startup) do
       ::Coverband.start
       ::Coverband.runtime_coverage!
+      
+      # 🔥 Setup global TracePoint for method tracking
+      Coverband::Collectors::TracepointMethodTracker.setup_global_tracepoint
     end
   end
   # Middleware chain configuration will be handled by the Railtie for Rails apps.
