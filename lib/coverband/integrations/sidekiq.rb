@@ -25,12 +25,9 @@ module Coverband
         puts "Sidekiq running on thread #{Thread.current.object_id}"
         
         if test_case_data
+          # Always use TracePoint for Sidekiq (multi-threaded environment)
           Thread.current[:coverband_test_case_id] = test_case_data
-          # Initialize thread-local method calls array
           Thread.current[:method_calls] = []
-          
-          # Note: Global TracePoint is already enabled and will automatically track
-          # methods for this thread since we set Thread.current[:coverband_test_case_id]
         end
         
         yield
@@ -38,11 +35,9 @@ module Coverband
       ensure
         if test_case_data
           begin
-            # Get method calls from thread-local storage
+            # Always use TracePoint for Sidekiq
             method_calls = Thread.current[:method_calls] || []
-            
-            # Save method coverage using TracePoint data
-            Coverband::Collectors::TracepointMethodTracker.save_sidekiq_coverage(test_case_data, method_calls)
+            Coverband::Collectors::TracepointMethodTracker.save_tracepoint_coverage(test_case_data, method_calls)
             
             # Clean up thread-local data
             Thread.current[:coverband_test_case_id] = nil
@@ -66,7 +61,7 @@ if defined?(::Sidekiq)
       ::Coverband.start
       ::Coverband.runtime_coverage!
       
-      # 🔥 Setup global TracePoint for method tracking
+      # Always setup global TracePoint for Sidekiq (multi-threaded environment)
       Coverband::Collectors::TracepointMethodTracker.setup_global_tracepoint
     end
   end

@@ -28,6 +28,11 @@ module Coverband
         Coverband.runtime_coverage!
       end
 
+      # Setup global TracePoint for app requests if configured
+      if Coverband.configuration.use_tracepoint_for_app_requests
+        Coverband::Collectors::TracepointMethodTracker.setup_global_tracepoint
+      end
+
       if defined?(::Sidekiq)
         Sidekiq.configure_client do |config|
           config.client_middleware do |chain|

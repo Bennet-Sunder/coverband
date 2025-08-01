@@ -47,7 +47,7 @@ module Coverband
           @tracepoint_enabled
         end
 
-        def save_sidekiq_coverage(test_case_data, method_calls)
+        def save_tracepoint_coverage(test_case_data, method_calls)
           test_case_data&.deep_symbolize_keys!
           return if method_calls.empty?
 
@@ -109,7 +109,7 @@ module Coverband
         end
 
         def record_method_call(tp)
-          # Get or initialize thread-local method calls array
+          # Use thread-local storage
           Thread.current[:method_calls] ||= []
 
           # Record method call
