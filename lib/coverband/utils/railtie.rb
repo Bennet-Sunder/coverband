@@ -20,6 +20,7 @@ module Coverband
     config.after_initialize do
       require "coverband/integrations/sidekiq" if defined?(::Sidekiq) # Ensure Sidekiq integration is loaded
       require "coverband/collectors/tracepoint_method_tracker" if defined?(::Sidekiq) # Ensure TracepointMethodTracker is loaded
+      require "coverband/coverband_coverage_worker" if defined?(::Sidekiq) # Ensure worker is loaded after Rails initialization
 
       unless Coverband.tasks_to_ignore?
         Coverband.configure unless Coverband.configured?

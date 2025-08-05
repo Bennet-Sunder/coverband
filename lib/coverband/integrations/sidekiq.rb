@@ -5,7 +5,8 @@ module Coverband
     class SidekiqClientMiddleware
       def call(_worker_class, job, _queue, _redis_pool)
         Rails.logger.info "Coverband: Adding test case ID to Sidekiq job #{Thread.current[:coverband_test_case_id]}"
-        if Thread.current[:coverband_test_case_id]
+
+        if Thread.current[:coverband_test_case_id] && _worker_class != 'Coverband::CoverbandCoverageWorker'
           job['coverband_test_case_id'] = {
             test_id: Thread.current[:coverband_test_case_id][:test_id],
             request_id: Thread.current[:message_uuid],

@@ -39,6 +39,31 @@ module Coverband
       false # Always return false on error, never re-raise to avoid disrupting calling code
     end
 
+    def process_coverage_data_from_worker(coverage_data)
+      # Handle data format from Sidekiq worker
+      test_case_data = coverage_data['test_case_data']
+      method_calls = coverage_data['method_calls']
+      
+      return false unless test_case_data && method_calls
+      
+      # Convert method_calls to the expected format
+      coverage_data_formatted = method_calls.map do |call|
+        {
+          full_method_name: call['full_method_name'],
+          class_name: call['class_name'],
+          method_name: call['method_name'],
+          file_path: call['file_path']
+        }
+      end
+      
+      # Process using existing logic
+      process_coverage_data(
+        test_case_data['test_id'],
+        test_case_data,
+        coverage_data_formatted
+      )
+    end
+
 
     def build_method_id_map(request_id, coverage_data)
       method_names = coverage_data.map { |item| item[:full_method_name] }.uniq

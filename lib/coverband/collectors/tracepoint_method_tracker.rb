@@ -128,10 +128,10 @@ module Coverband
             # Create method coverage hash
             calls.each do |call|
               coverage_data << {
-                file_path: call[:file],
-                class_name: call[:class],
-                method_name: call[:method],
-                full_method_name: "#{call[:class]}##{call[:method]}"
+                file_path: call[:file] || call['file'],
+                class_name: call[:class] || call['class'],
+                method_name: call[:method] || call['method'],
+                full_method_name: "#{call[:class] || call['class']}##{call[:method] || call['method']}"
               }
             end
           end

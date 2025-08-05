@@ -62,18 +62,18 @@ module Coverband
           if Coverband.configuration.use_tracepoint_for_app_requests
             # Save method coverage using TracePoint data
             method_calls = Thread.current[:method_calls] || []
-            Coverband::Collectors::TracepointMethodTracker.save_tracepoint_coverage(test_case_data, method_calls)
+            queue_coverage_job(test_case_data, method_calls)
             
             # Clean up thread-local data
             Thread.current[:coverband_test_case_id] = nil
             Thread.current[:method_calls] = nil
           else
             # Use Coverage module approach
-            Coverband::Collectors::Coverage.save_multithreaded_coverage(test_case_data)
+            queue_coverage_job(test_case_data)
           end
         rescue => e
           if defined?(NewRelic::Agent)
-            NewRelic::Agent.notice_error(e, { error: "Coverband storage failed for #{test_case_data.to_json}" })
+            NewRelic::Agent.notice_error(e, { error: "Coverband job queuing failed for #{test_case_data.to_json}" })
           end
         end        
       end
@@ -90,6 +90,20 @@ module Coverband
 
     def compress_keys(data)
       data.transform_keys { |k| FIELD_MAPPING[k] || k }
+    end
+
+    def queue_coverage_job(test_case_data, method_calls = nil)
+      coverage_data_key = "coverband_coverage:#{test_case_data[:request_id]}"
+      
+      coverage_data = {
+        test_case_data: test_case_data,
+        method_calls: method_calls
+      }
+      
+      BaseRedis.set_key_and_expiry(coverage_data_key, coverage_data.to_json, 60.minutes.to_i)
+      GlobalSidekiqWorker.enqueue(Coverband::CoverbandCoverageWorker, { coverage_data_key: coverage_data_key, request_id: test_case_data[:request_id] })
+      
+      Rails.logger.info("Coverband: Queued coverage job for request #{test_case_data[:request_id]}")
     end
   end
 end
