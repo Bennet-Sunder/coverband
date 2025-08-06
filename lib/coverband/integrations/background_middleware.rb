@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 module Coverband
+  # Temporary coverage data expiry for background job processing
+  TEMPORARY_COVERAGE_EXPIRY = 60.minutes.to_i
+
   class BackgroundMiddleware
     # Field mapping between readable names and single-letter keys for storage
     FIELD_MAPPING = {
@@ -100,7 +103,7 @@ module Coverband
         method_calls: method_calls
       }
       
-      BaseRedis.set_key_and_expiry(coverage_data_key, coverage_data.to_json, 60.minutes.to_i)
+      BaseRedis.set_key_and_expiry(coverage_data_key, coverage_data.to_json, TEMPORARY_COVERAGE_EXPIRY)
       GlobalSidekiqWorker.enqueue(Coverband::CoverbandCoverageWorker, { coverage_data_key: coverage_data_key, request_id: test_case_data[:request_id] })
       
       Rails.logger.info("Coverband: Queued coverage job for request #{test_case_data[:request_id]}")
