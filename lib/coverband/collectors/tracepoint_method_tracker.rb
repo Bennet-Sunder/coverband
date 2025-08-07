@@ -21,7 +21,7 @@ module Coverband
             next unless test_case_data
 
             # Skip if method should be ignored
-            #next if ignore_method?(tp)
+            next if ignore_method?(tp)
 
             # Record method call to thread-local storage
             record_method_call(tp)
