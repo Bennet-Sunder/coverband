@@ -96,7 +96,7 @@ module Coverband
     end
 
     def queue_coverage_job(test_case_data, method_calls = nil)
-      coverage_data_key = "coverband_coverage:#{test_case_data[:request_id]}"
+      coverage_data_key = "withoutfilter_coverband_coverage:#{test_case_data[:request_id]}"
       
       coverage_data = {
         test_case_data: test_case_data,
