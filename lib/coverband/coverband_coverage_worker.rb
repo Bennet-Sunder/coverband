@@ -15,7 +15,7 @@ module Coverband
         test_case_data = parsed_data['test_case_data']
         method_calls = parsed_data['method_calls']
         Coverband::Collectors::TracepointMethodTracker.save_tracepoint_coverage(test_case_data, method_calls)
-        BaseRedis.remove_key(coverage_data_key)
+        #BaseRedis.remove_key(coverage_data_key)
       rescue => e
         Rails.logger.info "Coverband: CoverbandCoverageWorker failed: #{e.message}"
         NewRelic::Agent.notice_error(e, { error: "Coverband storage failed for #{test_case_data.to_json}" })
